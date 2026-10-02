@@ -1,10 +1,10 @@
 use crate::{
-    config::Result,
+    config::{CompatibilityConfig, Result},
     control::{to_percent, to_raw},
 };
 use libloading::Library;
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Instant};
+use std::{path::PathBuf, time::Instant};
 type GetBuffer = unsafe extern "system" fn(u32, *mut u8) -> i32;
 type SetData = unsafe extern "system" fn(u32, *const u8, u32) -> i32;
 #[derive(Clone, Debug)]
@@ -32,20 +32,31 @@ pub struct Insyde {
     description: String,
 }
 impl Insyde {
-    pub fn open(path: Option<&Path>) -> Result<Self> {
+    pub fn resolve(compatibility: &CompatibilityConfig) -> Result<(String, PathBuf)> {
         let machine = crate::platform::machine()?;
-        if !machine.contains("NP5") || !machine.contains("SN") {
-            return Err(format!(
-                "尚未验证机型 {machine} 的 EC 映射；当前仅支持 NP5x_6x_7x_SNx"
-            ));
+        Self::resolve_for_machine(compatibility, machine)
+    }
+    fn resolve_for_machine(
+        compatibility: &CompatibilityConfig,
+        machine: String,
+    ) -> Result<(String, PathBuf)> {
+        if !compatibility.matches_machine(&machine)? {
+            return Err(format!("当前机型 {machine} 未匹配机型白名单"));
         }
-        let path = match path {
-            Some(p) => p.to_path_buf(),
+        let path = match &compatibility.dll_path {
+            Some(p) => p.clone(),
             None => crate::platform::find_dll()?,
         };
         if !path.is_absolute() {
             return Err("DLL 必须使用绝对路径".into());
         }
+        if !path.is_file() {
+            return Err(format!("找不到 DLL：{}", path.display()));
+        }
+        Ok((machine, path))
+    }
+    pub fn open(compatibility: &CompatibilityConfig) -> Result<Self> {
+        let (machine, path) = Self::resolve(compatibility)?;
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let hash = format!("{:x}", Sha256::digest(&bytes));
         // Only the actual x64 FnKey/DriverStore binaries inspected on this machine are supported.
@@ -196,4 +207,34 @@ pub fn decode_rpm(counter: u16) -> Option<u32> {
     }
     let rpm = (2_156_250.0 / f64::from(counter)).round() as u32;
     (rpm <= 20000).then_some(rpm)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_dll_resolution_checks_the_model_and_file_without_loading() {
+        let path = std::env::temp_dir().join(format!("clevo-resolve-{}.dll", std::process::id()));
+        std::fs::write(&path, b"resolution must not load this file").unwrap();
+        let c = CompatibilityConfig {
+            model_whitelist: vec!["^P16 Pro IXA1$".into()],
+            dll_path: Some(path.clone()),
+        };
+        assert_eq!(
+            Insyde::resolve_for_machine(&c, "P16 Pro IXA1".into()).unwrap(),
+            ("P16 Pro IXA1".into(), path.clone())
+        );
+        assert!(
+            Insyde::resolve_for_machine(&c, "Other model".into())
+                .unwrap_err()
+                .contains("未匹配")
+        );
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            Insyde::resolve_for_machine(&c, "P16 Pro IXA1".into())
+                .unwrap_err()
+                .contains("找不到 DLL")
+        );
+    }
 }

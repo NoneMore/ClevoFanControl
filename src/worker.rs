@@ -46,7 +46,10 @@ impl Worker {
     pub fn start(settings: Settings, demo: bool) -> Self {
         let (tx, rx) = mpsc::channel();
         let (etx, erx) = mpsc::channel();
-        let join = thread::spawn(move || run(settings, open(demo), rx, etx));
+        let join = thread::spawn(move || {
+            let initial = open(demo, &settings.compatibility);
+            run(settings, initial, rx, etx)
+        });
         Self {
             tx,
             rx: erx,
@@ -59,11 +62,14 @@ impl Worker {
         }
     }
 }
-fn open(demo: bool) -> std::result::Result<Box<dyn Hardware>, String> {
+fn open(
+    demo: bool,
+    compatibility: &crate::config::CompatibilityConfig,
+) -> std::result::Result<Box<dyn Hardware>, String> {
     if demo {
         Ok(Box::new(crate::hardware::Demo::default()))
     } else {
-        Ok(Box::new(crate::hardware::Insyde::open(None)?))
+        Ok(Box::new(crate::hardware::Insyde::open(compatibility)?))
     }
 }
 fn run(
@@ -164,7 +170,7 @@ fn run(
                 }
                 Command::Retry => {
                     if !owned {
-                        match open(demo) {
+                        match open(demo, &settings.compatibility) {
                             Ok(h) => {
                                 hardware = Some(h);
                                 error = None;

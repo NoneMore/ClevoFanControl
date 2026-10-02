@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -87,6 +90,53 @@ fn default_history_points() -> usize {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompatibilityConfig {
+    pub model_whitelist: Vec<String>,
+    pub dll_path: Option<PathBuf>,
+}
+impl Default for CompatibilityConfig {
+    fn default() -> Self {
+        Self {
+            model_whitelist: vec![
+                "(?s)NP5.*SN|SN.*NP5".into(),
+                "^P16 Pro IXA1$".into(),
+                "^P16 Pro IXA1 NP5x_7x_SNx$".into(),
+            ],
+            dll_path: None,
+        }
+    }
+}
+impl CompatibilityConfig {
+    fn regexes(&self) -> Result<Vec<regex::Regex>> {
+        if self.model_whitelist.is_empty() {
+            return Err("机型白名单至少需要一条正则表达式".into());
+        }
+        self.model_whitelist
+            .iter()
+            .enumerate()
+            .map(|(i, pattern)| {
+                if pattern.trim().is_empty() {
+                    return Err(format!("机型白名单第 {} 条不能为空", i + 1));
+                }
+                regex::Regex::new(pattern)
+                    .map_err(|e| format!("机型白名单第 {} 条正则表达式无效：{e}", i + 1))
+            })
+            .collect()
+    }
+    pub fn matches_machine(&self, machine: &str) -> Result<bool> {
+        Ok(self.regexes()?.iter().any(|r| r.is_match(machine)))
+    }
+    pub fn validate(&self) -> Result<()> {
+        self.regexes()?;
+        if self.dll_path.as_ref().is_some_and(|p| !p.is_absolute()) {
+            return Err("自定义 DLL 必须使用绝对路径，留空则自动查找".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
     pub schema_version: u32,
     pub global: ControlConfig,
@@ -100,6 +150,10 @@ pub struct Settings {
     pub font_family: Option<String>,
     pub auto_run: bool,
     pub close_to_tray: bool,
+    #[serde(default)]
+    pub start_to_tray: bool,
+    #[serde(default)]
+    pub compatibility: CompatibilityConfig,
     pub auto_switch: bool,
     pub presets: Vec<Preset>,
 }
@@ -114,6 +168,8 @@ impl Default for Settings {
             font_family: None,
             auto_run: false,
             close_to_tray: false,
+            start_to_tray: false,
+            compatibility: CompatibilityConfig::default(),
             auto_switch: false,
             presets: vec![],
         }
@@ -121,6 +177,7 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn validate(&self) -> Result<()> {
+        self.compatibility.validate()?;
         if self.schema_version != 1
             || !(8..=16).contains(&self.font_size)
             || self.presets.len() > 32

@@ -16,8 +16,15 @@ fn main() {
             return;
         }
     };
+    let path = std::env::current_exe()
+        .expect("executable path")
+        .with_file_name("ClevoFanControl.x64.json");
+    let (mut settings, error) = match Settings::load(&path) {
+        Ok(s) => (s, None),
+        Err(e) => (Settings::default(), Some(e)),
+    };
     if args.iter().any(|a| a == "--probe") {
-        let result = Insyde::open(None).and_then(|mut h| {
+        let result = Insyde::open(&settings.compatibility).and_then(|mut h| {
             println!("{}", h.description());
             println!("{:?}", h.sample()?);
             Ok(())
@@ -29,7 +36,7 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--hardware-check") {
-        let result = Insyde::open(None).and_then(|mut h| {
+        let result = Insyde::open(&settings.compatibility).and_then(|mut h| {
             let before = h.sample()?;
             println!("Before: {before:?}");
             let test = (|| {
@@ -56,13 +63,12 @@ fn main() {
         }
         return;
     }
-    let path = std::env::current_exe()
-        .expect("executable path")
-        .with_file_name("ClevoFanControl.x64.json");
-    let (settings, error) = match Settings::load(&path) {
-        Ok(s) => (s, None),
-        Err(e) => (Settings::default(), Some(e)),
-    };
+    if !demo
+        && let Err(reason) = Insyde::resolve(&settings.compatibility)
+        && !ui::startup_compatibility(&mut settings, &path, &reason)
+    {
+        return;
+    }
     let worker = Worker::start(settings.clone(), demo);
     ui::run(
         settings,

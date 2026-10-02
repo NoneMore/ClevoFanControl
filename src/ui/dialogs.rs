@@ -2,6 +2,148 @@
 use super::*;
 use fltk::text::{TextBuffer, TextDisplay, WrapMode};
 
+pub(super) fn compatibility(
+    initial: &config::CompatibilityConfig,
+    reason: &str,
+    require_ready: bool,
+    native: &mpsc::Receiver<NativeEvent>,
+    parent: app::Sender<Action>,
+) -> Option<config::CompatibilityConfig> {
+    let size = UI_TEXT_SIZE.get();
+    let mut window = Window::default()
+        .with_size(780, 640)
+        .with_label("兼容配置")
+        .center_screen();
+    window.set_color(PAPER);
+    let mut column = Flex::default_fill().column();
+    column.set_margin(24);
+    column.set_pad(12);
+    let heading = section("兼容配置");
+    column.fixed(&heading, 30);
+    let mut message = TextDisplay::default();
+    message.set_frame(FrameType::NoBox);
+    message.set_color(PAPER);
+    message.set_text_color(INK);
+    message.set_text_font(Font::Helvetica);
+    message.set_text_size(size);
+    message.wrap_mode(WrapMode::AtBounds, 0);
+    let mut message_buffer = TextBuffer::default();
+    message_buffer.set_text(reason);
+    message.set_buffer(message_buffer.clone());
+    column.fixed(&message, 100);
+    let caption = label("机型白名单（每行一条正则表达式，匹配任意一条即可）");
+    column.fixed(&caption, 32);
+    let mut models = fltk::input::MultilineInput::default();
+    models.set_value(&initial.model_whitelist.join("\n"));
+    models.set_color(SURFACE);
+    models.set_text_color(INK);
+    models.set_text_font(Font::Helvetica);
+    models.set_text_size(size);
+    models.set_tooltip("例如 ^P16 Pro IXA1$；空行会忽略。使用 ^ 和 $ 可限定完整机型名。");
+    let caption = label("自定义 DLL 路径");
+    column.fixed(&caption, 28);
+    let mut row = Flex::default().row();
+    row.set_pad(12);
+    let mut dll = Input::default();
+    if let Some(path) = &initial.dll_path {
+        dll.set_value(&path.to_string_lossy());
+    }
+    dll.set_color(SURFACE);
+    dll.set_text_color(INK);
+    dll.set_text_size(size);
+    let mut browse = Button::default().with_label("浏览…");
+    style_button(&mut browse, false);
+    row.fixed(&browse, 96);
+    let mut dll_input = dll.clone();
+    browse.set_callback(move |_| {
+        let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
+        chooser.set_title("选择厂商 DLL");
+        chooser.set_filter("DLL\t*.dll");
+        chooser.show();
+        let path = chooser.filename();
+        if !path.as_os_str().is_empty() {
+            dll_input.set_value(&path.to_string_lossy());
+        }
+    });
+    row.end();
+    column.fixed(&row, 42);
+    let mut note = label("路径留空时自动查找厂商 DLL。兼容配置不代表机型的风扇控制已验证。");
+    note.set_align(Align::Left | Align::Inside | Align::Wrap);
+    column.fixed(&note, 48);
+    let mut row = Flex::default().row();
+    row.set_pad(12);
+    Frame::default();
+    let mut cancel = Button::default().with_label(if require_ready { "退出" } else { "取消" });
+    style_button(&mut cancel, false);
+    row.fixed(&cancel, 112);
+    let mut cancel_window = window.clone();
+    cancel.set_callback(move |_| cancel_window.hide());
+    let mut accept = Button::default().with_label(if require_ready {
+        "保存并继续"
+    } else {
+        "确定"
+    });
+    style_button(&mut accept, true);
+    row.fixed(&accept, 160);
+    let result = Rc::new(RefCell::new(None));
+    let answer = result.clone();
+    let mut accept_window = window.clone();
+    accept.set_callback(move |_| {
+        let path = dll.value();
+        let candidate = config::CompatibilityConfig {
+            model_whitelist: models
+                .value()
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(str::to_owned)
+                .collect(),
+            dll_path: (!path.trim().is_empty()).then(|| PathBuf::from(path.trim())),
+        };
+        let validation = candidate.validate().and_then(|()| {
+            if require_ready {
+                clevo_fan_control::hardware::Insyde::resolve(&candidate).map(|_| ())
+            } else {
+                Ok(())
+            }
+        });
+        match validation {
+            Ok(()) => {
+                *answer.borrow_mut() = Some(candidate);
+                accept_window.hide();
+            }
+            Err(e) => message_buffer.set_text(&e),
+        }
+    });
+    row.end();
+    column.fixed(&row, 42);
+    column.end();
+    window.end();
+    apply_font(&mut column.as_group().unwrap(), size);
+    window.resizable(&column);
+    window.size_range(780, 640, 0, 0);
+    window.make_modal(true);
+    window.set_callback(|w| w.hide());
+    window.show();
+    platform::set_window_dark(window.raw_handle() as _, DARK.get().unwrap_or(false));
+    while window.shown() {
+        app::wait_for(0.05).ok();
+        refresh_system_appearance();
+        while let Ok(event) = native.try_recv() {
+            match event {
+                NativeEvent::Exit => {
+                    parent.send(Action::Exit);
+                    window.hide();
+                }
+                NativeEvent::Show => window.show(),
+                _ => {}
+            }
+        }
+    }
+    let answer = result.borrow_mut().take();
+    Window::delete(window);
+    answer
+}
+
 struct DialogView {
     window: Window,
     result: Rc<Cell<Option<usize>>>,

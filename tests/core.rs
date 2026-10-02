@@ -215,3 +215,56 @@ fn sampling_interval_and_history_count_accept_old_config_and_new_ranges() {
         assert!(s.validate().is_err());
     }
 }
+
+#[test]
+fn compatibility_patterns_preserve_existing_models_and_match_any_custom_rule() {
+    let mut c = CompatibilityConfig::default();
+    assert!(c.matches_machine("NP5x_6x_7x_SNx").unwrap());
+    assert!(c.matches_machine("SN NP5").unwrap());
+    assert!(!c.matches_machine("NP5").unwrap());
+    assert!(!c.matches_machine("SN").unwrap());
+    assert!(c.matches_machine("P16 Pro IXA1").unwrap());
+    assert!(c.matches_machine("P16 Pro IXA1 NP5x_7x_SNx").unwrap());
+    assert!(c.matches_machine("NP5x_6x_7x_SNx").unwrap());
+    assert!(!c.matches_machine("P16 Pro IXA2").unwrap());
+    assert!(!c.matches_machine("Other P16 Pro IXA1").unwrap());
+    c.model_whitelist.push("^P16 Pro IXA2$".into());
+    assert!(c.matches_machine("P16 Pro IXA2").unwrap());
+    c.model_whitelist.push("(?i)^游戏本-\\d+$".into());
+    assert!(c.matches_machine("游戏本-123").unwrap());
+}
+
+#[test]
+fn invalid_compatibility_patterns_and_relative_dll_paths_are_rejected() {
+    let mut s = Settings::default();
+    s.compatibility.model_whitelist.push("[".into());
+    assert!(s.validate().unwrap_err().contains("第 4 条"));
+    assert!(s.compatibility.matches_machine("NP5 SN").is_err());
+    s.compatibility.model_whitelist.clear();
+    assert!(s.validate().is_err());
+    s.compatibility = CompatibilityConfig::default();
+    s.compatibility.dll_path = Some("InsydeDCHU.dll".into());
+    assert!(s.validate().is_err());
+}
+
+#[test]
+fn compatibility_and_start_to_tray_roundtrip_with_old_configuration_defaults() {
+    let mut s = Settings {
+        start_to_tray: true,
+        ..Settings::default()
+    };
+    s.compatibility
+        .model_whitelist
+        .push("^Custom model$".into());
+    s.compatibility.dll_path = Some(std::env::temp_dir().join("InsydeDCHU.dll"));
+    s.validate().unwrap();
+    let mut json = serde_json::to_value(&s).unwrap();
+    assert_eq!(serde_json::from_value::<Settings>(json.clone()).unwrap(), s);
+    let object = json.as_object_mut().unwrap();
+    object.remove("compatibility");
+    object.remove("startToTray");
+    let old: Settings = serde_json::from_value(json).unwrap();
+    assert_eq!(old.compatibility, CompatibilityConfig::default());
+    assert!(!old.start_to_tray);
+    old.validate().unwrap();
+}

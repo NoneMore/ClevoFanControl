@@ -153,6 +153,7 @@ enum Action {
     Retry,
     About,
     Settings,
+    Compatibility,
     SaveSettings,
     Select,
 }
@@ -543,6 +544,7 @@ struct Fields {
     auto: CheckButton,
     autorun: CheckButton,
     close: CheckButton,
+    start_to_tray: CheckButton,
     font: Spinner,
     theme: Choice,
     family: Choice,
@@ -563,6 +565,7 @@ impl Fields {
             || self.selected_family() != s.font_family
             || self.autorun.value() != s.auto_run
             || self.close.value() != s.close_to_tray
+            || self.start_to_tray.value() != s.start_to_tray
     }
     fn text_size(&mut self, size: i32) {
         UI_TEXT_SIZE.set(size);
@@ -602,6 +605,36 @@ pub fn startup_error(message: &str) {
     let (_native_tx, native_rx) = mpsc::channel();
     let (tx, _) = app::channel::<Action>();
     dialogs::alert(&native_rx, tx, message);
+}
+pub fn startup_compatibility(
+    settings: &mut Settings,
+    path: &std::path::Path,
+    reason: &str,
+) -> bool {
+    let _app = app::App::default().with_scheme(app::Scheme::Base);
+    install_control_style();
+    UI_TEXT_SIZE.set(settings.font_size * 4 / 3);
+    apply_family(settings.font_family.clone());
+    apply_theme(settings.theme);
+    let (_native_tx, native_rx) = mpsc::channel();
+    let (tx, _) = app::channel::<Action>();
+    let mut candidate = settings.clone();
+    let mut message = reason.to_string();
+    loop {
+        let Some(compatibility) =
+            dialogs::compatibility(&candidate.compatibility, &message, true, &native_rx, tx)
+        else {
+            return false;
+        };
+        candidate.compatibility = compatibility;
+        match candidate.save(path) {
+            Ok(()) => {
+                *settings = candidate;
+                return true;
+            }
+            Err(e) => message = e,
+        }
+    }
 }
 pub fn run(
     mut settings: Settings,
@@ -793,7 +826,7 @@ pub fn run(
     win.size_range(980, 780, 0, 0);
     win.set_callback(move |_| tx.send(Action::Close));
     let mut settings_window = Window::default()
-        .with_size(780, 640)
+        .with_size(780, 720)
         .with_label("设置")
         .center_screen();
     settings_window.set_color(PAPER);
@@ -837,8 +870,18 @@ pub fn run(
     let row = Flex::default().row();
     let autorun = check("登录时启动", settings.auto_run, Action::Edit, tx);
     let close = check("关闭时隐藏到托盘", settings.close_to_tray, Action::Edit, tx);
+    let start_to_tray = check("启动后进入托盘", settings.start_to_tray, Action::Edit, tx);
     row.end();
     settings_root.fixed(&row, 40);
+    let heading = section("硬件兼容");
+    settings_root.fixed(&heading, 28);
+    let mut row = Flex::default().row();
+    let compatibility = button("兼容配置…", Action::Compatibility, tx);
+    row.fixed(&compatibility, 180);
+    let mut compatibility_note = label("修改机型白名单和 DLL 路径，保存后下次启动生效。");
+    compatibility_note.set_align(Align::Left | Align::Inside | Align::Wrap);
+    row.end();
+    settings_root.fixed(&row, 44);
     let mut row = Flex::default().row();
     label("字号（pt）");
     let font = spin(8., 16., settings.font_size as f64, Action::Font, tx);
@@ -881,7 +924,7 @@ pub fn run(
     settings_root.end();
     settings_window.end();
     settings_window.resizable(&settings_root);
-    settings_window.size_range(780, 640, 0, 0);
+    settings_window.size_range(780, 720, 0, 0);
     settings_window.make_modal(true);
     settings_window.set_callback(|w| w.hide());
     let mut fields = Fields {
@@ -896,6 +939,7 @@ pub fn run(
         auto,
         autorun,
         close,
+        start_to_tray,
         font,
         theme,
         family,
@@ -953,6 +997,7 @@ pub fn run(
     let mut exit_after_save = false;
     let mut stopped = false;
     let mut last_snapshot: Option<Snapshot> = None;
+    let mut startup_hide_pending = settings.start_to_tray && !smoke && load_error.is_none();
     let began = Instant::now();
     let mut last_indices = [usize::MAX; 2];
     let mut last_points = [(-1, -1); 2];
@@ -1029,6 +1074,12 @@ pub fn run(
                     if win.shown() {
                         for c in canvases.iter_mut().chain(history_canvases.iter_mut()) {
                             c.redraw();
+                        }
+                    }
+                    if startup_hide_pending {
+                        startup_hide_pending = false;
+                        if tray.is_some() && s.sample.is_some() && s.error.is_none() {
+                            win.hide();
                         }
                     }
                     last_snapshot = Some(s);
@@ -1111,6 +1162,18 @@ pub fn run(
                         settings_window.raw_handle() as _,
                         DARK.get().unwrap_or(false),
                     );
+                }
+                Action::Compatibility => {
+                    if let Some(compatibility) = dialogs::compatibility(
+                        &settings.compatibility,
+                        "修改后请保存并应用；兼容配置将在下次启动时生效。",
+                        false,
+                        &nrx,
+                        tx,
+                    ) {
+                        settings.compatibility = compatibility;
+                        store_dirty = true;
+                    }
                 }
                 Action::SaveSettings => {
                     settings_window.hide();
@@ -1242,6 +1305,7 @@ pub fn run(
                         candidate.font_family = fields.selected_family();
                         candidate.auto_run = fields.autorun.value();
                         candidate.close_to_tray = fields.close.value();
+                        candidate.start_to_tray = fields.start_to_tray.value();
                         if let Some(name) = &e.target {
                             if let Some(p) = candidate.presets.iter_mut().find(|p| &p.name == name)
                             {
@@ -1331,6 +1395,7 @@ pub fn run(
                             apply_family(settings.font_family.clone());
                             fields.autorun.set_value(settings.auto_run);
                             fields.close.set_value(settings.close_to_tray);
+                            fields.start_to_tray.set_value(settings.start_to_tray);
                             fields.auto.set_value(settings.auto_switch);
                             let _ = worker.tx.send(Command::Settings(settings.clone()));
                             let _ = worker.tx.send(Command::Select(None));
@@ -1385,7 +1450,9 @@ pub fn run(
                     let file = chooser.filename();
                     if file.is_file() {
                         match config::import_legacy(&file) {
-                            Ok(s) => {
+                            Ok(mut s) => {
+                                s.compatibility = settings.compatibility.clone();
+                                s.start_to_tray = settings.start_to_tray;
                                 settings = s;
                                 let mut e = editor.borrow_mut();
                                 e.draft = settings.global.clone();
@@ -1396,6 +1463,7 @@ pub fn run(
                                 fields.autorun.set_value(false);
                                 fields.auto.set_value(false);
                                 fields.close.set_value(settings.close_to_tray);
+                                fields.start_to_tray.set_value(settings.start_to_tray);
                                 fields.font.set_value(settings.font_size as f64);
                                 fields
                                     .history_points
