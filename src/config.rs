@@ -101,6 +101,7 @@ impl Default for CompatibilityConfig {
                 "(?s)NP5.*SN|SN.*NP5".into(),
                 "^P16 Pro IXA1$".into(),
                 "^P16 Pro IXA1 NP5x_7x_SNx$".into(),
+                "(?i)^NH5xAx$".into(),
             ],
             dll_path: None,
         }
@@ -276,7 +277,6 @@ struct LegacyGlobal {
     force_temp: i32,
     linear: bool,
     take_over: bool,
-    force_cooling: bool,
     soft_control: bool,
     font_size: i32,
     auto_run: bool,
