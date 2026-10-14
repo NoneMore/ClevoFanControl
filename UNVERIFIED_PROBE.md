@@ -12,10 +12,10 @@
 
 ## 用法
 
-可以直接把 DLL 的绝对路径放在命令后面，无需先修改配置文件：
+可以直接把 DLL 的绝对路径放在命令后面，无需先修改配置文件。请使用 Debug 运行，这样控制台能直接看到输出：
 
 ```powershell
-cargo run --release -- --probe-unverified "C:\Windows\System32\DriverStore\FileRepository\acpibridge1.inf_amd64_6172acb3e289f51f\InsydeDCHU.dll"
+cargo run -- --probe-unverified "C:\Windows\System32\DriverStore\FileRepository\acpibridge1.inf_amd64_6172acb3e289f51f\InsydeDCHU.dll"
 ```
 
 如果命令后没有路径，则沿用 `ClevoFanControl.x64.json` 中的 `compatibility.dllPath` / 原有自动查找逻辑。
