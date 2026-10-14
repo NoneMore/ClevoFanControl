@@ -237,8 +237,13 @@ fn compatibility_patterns_preserve_existing_models_and_match_any_custom_rule() {
 #[test]
 fn invalid_compatibility_patterns_and_relative_dll_paths_are_rejected() {
     let mut s = Settings::default();
+    let invalid_index = s.compatibility.model_whitelist.len() + 1;
     s.compatibility.model_whitelist.push("[".into());
-    assert!(s.validate().unwrap_err().contains("第 4 条"));
+    assert!(
+        s.validate()
+            .unwrap_err()
+            .contains(&format!("第 {invalid_index} 条"))
+    );
     assert!(s.compatibility.matches_machine("NP5 SN").is_err());
     s.compatibility.model_whitelist.clear();
     assert!(s.validate().is_err());
