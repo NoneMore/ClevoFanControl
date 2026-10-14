@@ -5,8 +5,15 @@ use crate::{
 use libloading::Library;
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Instant};
+
 type GetBuffer = unsafe extern "system" fn(u32, *mut u8) -> i32;
 type SetData = unsafe extern "system" fn(u32, *const u8, u32) -> i32;
+
+const NH5XAX_DLL_SHA256: &str =
+    "38aea56871649d1aec8d732efcfadb52142eae337f360e010d516b8457b763a6";
+const NH5XAX_FALLBACK_DLL: &str =
+    r"C:\Program Files (x86)\ControlCenter\DCHU\InsydeDCHU.dll";
+
 #[derive(Clone, Debug)]
 pub struct Reading {
     pub temperature: i32,
@@ -45,6 +52,14 @@ impl Insyde {
         }
         let path = match &compatibility.dll_path {
             Some(p) => p.clone(),
+            None if machine.eq_ignore_ascii_case("NH5xAx") => {
+                let p = PathBuf::from(NH5XAX_FALLBACK_DLL);
+                if p.is_file() {
+                    p
+                } else {
+                    crate::platform::find_dll()?
+                }
+            }
             None => crate::platform::find_dll()?,
         };
         if !path.is_absolute() {
@@ -59,10 +74,11 @@ impl Insyde {
         let (machine, path) = Self::resolve(compatibility)?;
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let hash = format!("{:x}", Sha256::digest(&bytes));
-        // Only the actual x64 FnKey/DriverStore binaries inspected on this machine are supported.
+        // Only x64 vendor binaries that were inspected and hardware-tested are supported.
         if ![
             "75a47020d3a9d052e94dcb4e3ad61fb69f20177dd46e20c9a20883d92b83981b",
             "22fecadff27f4bf08cb4a17fe455ae490107b409e55827210f821947d65a9d47",
+            NH5XAX_DLL_SHA256,
         ]
         .contains(&hash.as_str())
         {
