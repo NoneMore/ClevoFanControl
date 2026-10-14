@@ -23,6 +23,18 @@ fn main() {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
     };
+    if args.iter().any(|a| a == "--probe-unverified") {
+        let result = Insyde::open_probe_unverified(&settings.compatibility).and_then(|mut h| {
+            println!("{}", h.description());
+            println!("{:?}", h.sample()?);
+            Ok(())
+        });
+        if let Err(e) = result {
+            eprintln!("{e}");
+            std::process::exit(1)
+        }
+        return;
+    }
     if args.iter().any(|a| a == "--probe") {
         let result = Insyde::open(&settings.compatibility).and_then(|mut h| {
             println!("{}", h.description());
