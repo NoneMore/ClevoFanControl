@@ -23,8 +23,12 @@ fn main() {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
     };
-    if args.iter().any(|a| a == "--probe-unverified") {
-        let result = Insyde::open_probe_unverified(&settings.compatibility).and_then(|mut h| {
+    if let Some(index) = args.iter().position(|a| a == "--probe-unverified") {
+        let mut compatibility = settings.compatibility.clone();
+        if let Some(candidate) = args.get(index + 1).filter(|a| !a.starts_with("--")) {
+            compatibility.dll_path = Some(std::path::PathBuf::from(candidate));
+        }
+        let result = Insyde::open_probe_unverified(&compatibility).and_then(|mut h| {
             println!("{}", h.description());
             println!("{:?}", h.sample()?);
             Ok(())
