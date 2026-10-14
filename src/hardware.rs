@@ -12,6 +12,15 @@ type SetData = unsafe extern "system" fn(u32, *const u8, u32) -> i32;
 const NH5XAX_DLL_SHA256: &str = "38aea56871649d1aec8d732efcfadb52142eae337f360e010d516b8457b763a6";
 const NH5XAX_FALLBACK_DLL: &str = r"C:\Program Files (x86)\ControlCenter\DCHU\InsydeDCHU.dll";
 
+fn is_verified_hash(hash: &str) -> bool {
+    [
+        "75a47020d3a9d052e94dcb4e3ad61fb69f20177dd46e20c9a20883d92b83981b",
+        "22fecadff27f4bf08cb4a17fe455ae490107b409e55827210f821947d65a9d47",
+        NH5XAX_DLL_SHA256,
+    ]
+    .contains(&hash)
+}
+
 #[derive(Clone, Debug)]
 pub struct Reading {
     pub temperature: i32,
@@ -31,7 +40,7 @@ pub trait Hardware: Send {
 }
 pub struct Insyde {
     get: GetBuffer,
-    set: SetData,
+    set: Option<SetData>,
     _library: Library,
     count: usize,
     description: String,
@@ -69,17 +78,17 @@ impl Insyde {
         Ok((machine, path))
     }
     pub fn open(compatibility: &CompatibilityConfig) -> Result<Self> {
+        Self::open_inner(compatibility, false)
+    }
+    pub fn open_probe_unverified(compatibility: &CompatibilityConfig) -> Result<Self> {
+        Self::open_inner(compatibility, true)
+    }
+    fn open_inner(compatibility: &CompatibilityConfig, read_only_probe: bool) -> Result<Self> {
         let (machine, path) = Self::resolve(compatibility)?;
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let hash = format!("{:x}", Sha256::digest(&bytes));
-        // Only x64 vendor binaries that were inspected and hardware-tested are supported.
-        if ![
-            "75a47020d3a9d052e94dcb4e3ad61fb69f20177dd46e20c9a20883d92b83981b",
-            "22fecadff27f4bf08cb4a17fe455ae490107b409e55827210f821947d65a9d47",
-            NH5XAX_DLL_SHA256,
-        ]
-        .contains(&hash.as_str())
-        {
+        let verified = is_verified_hash(&hash);
+        if !verified && !read_only_probe {
             return Err(format!(
                 "DLL 版本尚未验证：{}，SHA256 {hash}",
                 path.display()
@@ -94,17 +103,30 @@ impl Insyde {
                 .get::<GetBuffer>(b"GetDCHU_Data_Buffer\0")
                 .map_err(|e| e.to_string())?
         };
-        let set = unsafe {
-            *library
-                .get::<SetData>(b"SetDCHU_Data\0")
-                .map_err(|e| e.to_string())?
+        let set = if read_only_probe {
+            None
+        } else {
+            Some(unsafe {
+                *library
+                    .get::<SetData>(b"SetDCHU_Data\0")
+                    .map_err(|e| e.to_string())?
+            })
+        };
+        let mode = if read_only_probe {
+            if verified {
+                "只读探测（已验证 DLL）"
+            } else {
+                "只读探测（未验证 DLL）"
+            }
+        } else {
+            "已验证 DLL"
         };
         let mut s = Self {
             get,
             set,
             _library: library,
             count: 0,
-            description: format!("{machine}\n{}\nSHA256 {hash}", path.display()),
+            description: format!("{machine}\n{}\nSHA256 {hash}\n{mode}", path.display()),
         };
         let b = s.buffer(13)?;
         s.count = b[12] as usize;
@@ -145,6 +167,9 @@ impl Hardware for Insyde {
         })
     }
     fn write(&mut self, duties: &[i32]) -> Result<()> {
+        let set = self
+            .set
+            .ok_or_else(|| "只读探测模式禁止写入风扇".to_string())?;
         if duties.len() != self.count || duties.iter().any(|v| !(0..=100).contains(v)) {
             return Err("写入通道或占空比无效".into());
         }
@@ -155,7 +180,7 @@ impl Hardware for Insyde {
             b[1] = (i + 1) as u8;
             b[2] = to_raw(*duty);
             b[6] = 0xc1;
-            let ret = unsafe { (self.set)(4, b.as_ptr(), 256) };
+            let ret = unsafe { set(4, b.as_ptr(), 256) };
             if ret != 4 {
                 return Err(format!("EC 风扇 {} 写入失败（{ret:#x}）", i + 1));
             }
@@ -163,8 +188,11 @@ impl Hardware for Insyde {
         Ok(())
     }
     fn automatic(&mut self) -> Result<()> {
+        let set = self
+            .set
+            .ok_or_else(|| "只读探测模式禁止修改自动控制状态".to_string())?;
         let mask = ((1u32 << self.count) - 1).to_le_bytes();
-        let ret = unsafe { (self.set)(0x69, mask.as_ptr(), 4) };
+        let ret = unsafe { set(0x69, mask.as_ptr(), 4) };
         if ret != 0x69 {
             Err(format!("恢复固件自动失败（{ret:#x}）"))
         } else {
@@ -226,6 +254,17 @@ pub fn decode_rpm(counter: u16) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_hashes_are_verified() {
+        assert!(is_verified_hash(
+            "75a47020d3a9d052e94dcb4e3ad61fb69f20177dd46e20c9a20883d92b83981b"
+        ));
+        assert!(is_verified_hash(NH5XAX_DLL_SHA256));
+        assert!(!is_verified_hash(
+            "430d522c811a5df1037d07714c47316967c015391985e3f9a0915eefc46d328f"
+        ));
+    }
 
     #[test]
     fn custom_dll_resolution_checks_the_model_and_file_without_loading() {
