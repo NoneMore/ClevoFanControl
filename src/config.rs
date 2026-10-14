@@ -277,6 +277,7 @@ struct LegacyGlobal {
     force_temp: i32,
     linear: bool,
     take_over: bool,
+    force_cooling: bool,
     soft_control: bool,
     font_size: i32,
     auto_run: bool,
