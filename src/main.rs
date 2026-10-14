@@ -26,7 +26,7 @@ fn main() {
     if let Some(index) = args.iter().position(|a| a == "--probe-unverified") {
         let mut compatibility = settings.compatibility.clone();
         if let Some(candidate) = args.get(index + 1).filter(|a| !a.starts_with("--")) {
-            compatibility.dll_path = Some(std::path::PathBuf::from(candidate));
+            compatibility.dll_path = Some(std::path::PathBuf::from(candidate.as_str()));
         }
         let result = Insyde::open_probe_unverified(&compatibility).and_then(|mut h| {
             println!("{}", h.description());
