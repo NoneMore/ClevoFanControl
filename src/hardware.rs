@@ -9,10 +9,8 @@ use std::{path::PathBuf, time::Instant};
 type GetBuffer = unsafe extern "system" fn(u32, *mut u8) -> i32;
 type SetData = unsafe extern "system" fn(u32, *const u8, u32) -> i32;
 
-const NH5XAX_DLL_SHA256: &str =
-    "38aea56871649d1aec8d732efcfadb52142eae337f360e010d516b8457b763a6";
-const NH5XAX_FALLBACK_DLL: &str =
-    r"C:\Program Files (x86)\ControlCenter\DCHU\InsydeDCHU.dll";
+const NH5XAX_DLL_SHA256: &str = "38aea56871649d1aec8d732efcfadb52142eae337f360e010d516b8457b763a6";
+const NH5XAX_FALLBACK_DLL: &str = r"C:\Program Files (x86)\ControlCenter\DCHU\InsydeDCHU.dll";
 
 #[derive(Clone, Debug)]
 pub struct Reading {
