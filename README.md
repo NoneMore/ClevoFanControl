@@ -117,7 +117,47 @@ cargo run -- --probe                # 真实硬件只读采样，输出 DLL 路�
 cargo run -- --hardware-check       # 真实写入 40%，等待 2 秒读回，再尝试恢复自动
 ```
 
-Debug 使用 `asInvoker`，Release 使用 `requireAdministrator`；真实硬件诊断可能需要从管理员终端运行。`--hardware-check` 会实际改变风扇占空比，不属于普通测试命令。`--smoke` 将截图写入系统临时目录；既有记录中曾出现退出超时，不能视为所有 GUI 场景均已通过。普通运行不生成错误日志或截图文件。
+Debug 使用 `asInvoker`，Release 使用 `requireAdministrator`；真实硬件诊断可能需要从管理员终端运行。日常图形界面建议使用 Release，它不会附带控制台窗口；Debug 默认保留控制台供诊断使用。`--hardware-check` 会实际改变风扇占空比，不属于普通测试命令。`--smoke` 将截图写入系统临时目录；既有记录中曾出现退出超时，不能视为所有 GUI 场景均已通过。普通运行不生成错误日志或截图文件。
+
+### CLI 采样与常规负载调优
+
+另有独立控制台程序 `clevo-fan-cli.exe`，Debug 产物位于 `target/debug/`，Release 与 GUI 同目录。它和 GUI 共用单实例锁，运行前先正常退出 GUI，并关闭其他工具的软件接管。
+
+```powershell
+cargo build --locked --bin clevo-fan-cli
+# 只读记录 4 小时，不接管风扇；输出目录每轮使用不同名称
+.\target\debug\clevo-fan-cli.exe monitor --out .\target\tuning\monitor-01
+# 4 小时调优，前 10 分钟为固件自动基线；CPU 优先 60°C，允许 60–65°C 稳定区间，GPU 约 50°C
+.\target\debug\clevo-fan-cli.exe tune --out .\target\tuning\session-01 --cpu-target 60 --gpu-target 50
+# 查询记录 / 提前停止（stop 不需要取得硬件锁）
+.\target\debug\clevo-fan-cli.exe status --out .\target\tuning\session-01
+.\target\debug\clevo-fan-cli.exe stop --out .\target\tuning\session-01
+```
+
+`--duration-secs` 默认 14400，`--baseline-secs` 默认 600，`--interval-secs` 默认 2；真实调优的基线至少 60 秒。可用 `--config FILE` 指定配置、`--demo` 验证模拟流程、`--help` 查看参数。仅 `tune` 会写入硬件，目前要求两个物理风扇。`monitor` 支持 1–3 个通道。
+
+调优以转速稳定为优先：温度经过 15 秒中位数与 30 秒 EMA 滤波；2 个百分点的占空比死区；普通变化间隔至少 30 秒，每次升速最多 2 个百分点、降速最多 1 个百分点，降速还需等待 120 秒。持续偏热时加快升速，原始 CPU ≥80°C / GPU ≥75°C 时绕过滤波与等待，直接请求 100%。保护触发后，温度需持续 30 秒低于触发线 5°C，才恢复至保护前占空比与当前曲线需求的较高值，避免满速沿普通降速节奏持续很久。GUI 会分别显示曲线目标与实际请求，并标明高温保护状态。CPU ≥85°C / GPU ≥80°C 则终止本轮并尝试恢复固件自动。这些是本轮实验保护线，不是芯片厂商额定温度。
+
+每 3 分钟评估一个窗口：仅调整实际温区附近的曲线节点，低温稳定时降 2 个百分点、持续偏热时升 4 个百分点；CPU 目标允许 +5°C 稳定区间，GPU 允许 +2°C。曲线种子下限为 CPU 25%、GPU 40%，高温节点保留。实际输出从当前值缓慢过渡。CPU、GPU 分别调优，不假定两路散热能力可以互相替代。该方法未测量声压或音调，也不能把常规负载结果当作所有负载下的最优曲线。
+
+每轮输出：
+
+- `telemetry.csv`：时间、阶段、通道、原始温度、实际占空比、RPM 和下一次请求占空比；每次采样刷新。
+- `events.jsonl`：开始、曲线调整、结束原因。
+- `report.json`：每 30 秒更新状态，基线与调优阶段分开统计温度分布、平均值所需的总和、占空比变化次数与总变化量；结束时写入恢复结果。不同阶段负载可能不同，不能直接据此宣称节省多少噪声或改善多少散热。
+- `candidate.json`：可用的新版本配置，启用 `stableResponse`，保留温度滤波与调速节奏；接管、自启动和自动匹配关闭，不覆盖原配置。修改曲线时原子更新，结束时再次保存。
+- `session.json`：本轮进程与模式；`stop` 创建 `STOP` 请求，需检查 `report.json` 确认最终状态和恢复结果。
+- `load.csv`：真实模式自动启动独立记录进程，每 5 秒采样 CPU 总利用率，以及 NVIDIA GPU 0 的核心利用率、显存控制器利用率、功耗、核心 / 显存频率、温度和查询耗时。
+
+负载记录使用 Windows 总内核 / 用户 / 空闲时间差分计算 CPU 利用率，不包含 CPU 封装功耗；显存控制器利用率不是显存容量占用率。用 `unix_ms` 对齐风扇记录。GPU 查询依赖已安装 NVIDIA 驱动提供的 `nvidia-smi.exe`；缺测保留空字段和错误码，不填成零。查询超时或失败不影响 EC 控制，记录器错误见 `load.stderr.log`。
+
+记录进程在控制进程退出或报告结束后自动退出，`--demo` 不启动负载采样。也可对尚未记录负载的运行使用 `clevo-fan-cli load --out DIR --interval-secs 5`，同一目录仅允许一个负载记录器。当前调优算法依据温度反馈，负载数据用于之后按相似负载比较结果，不采集进程级负载。
+
+`stableResponse` 为可选配置字段，旧配置默认关闭。GUI 控制线程同样支持它，优先于原来的“平滑调速”开关。界面目前没有对应开关；应用候选配置时，先退出程序并备份同目录的 `ClevoFanControl.x64.json`，再将 `candidate.json` 复制到该位置并改为这个文件名。重新启动后启用“软件接管”并“保存并应用”，即可保存日常接管配置；自启动仍需单独设置。
+
+采样失败、采样中断（包括恢复后的长间隔）、连续读回不匹配或转速计异常会结束调优并尝试恢复自动。Ctrl+C、停止请求和到时退出也执行恢复。强杀进程、断电、DLL / 驱动永久挂起仍无法保证恢复；程序不会修改系统睡眠设置。
+
+NH5xAx 的一次 4 小时常规负载验证结果见 [本机验证记录](docs/NH5XAX.md#four-hour-ordinary-workload-cli-session)。
 
 ## 引用与感谢
 

@@ -5,6 +5,9 @@ use std::{
 };
 
 pub type Result<T> = std::result::Result<T, String>;
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +33,8 @@ pub struct ControlConfig {
     pub linear: bool,
     pub take_over: bool,
     pub soft_control: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stable_response: bool,
 }
 impl Default for ControlConfig {
     fn default() -> Self {
@@ -42,6 +47,7 @@ impl Default for ControlConfig {
             linear: false,
             take_over: false,
             soft_control: false,
+            stable_response: false,
         }
     }
 }
@@ -317,6 +323,7 @@ pub fn import_legacy(path: &Path) -> Result<Settings> {
             linear: a.linear,
             take_over: false,
             soft_control: a.soft_control,
+            stable_response: false,
         },
         font_size: a.font_size,
         close_to_tray: a.close_to_tray,
@@ -340,6 +347,7 @@ pub fn import_legacy(path: &Path) -> Result<Settings> {
                     linear: p.linear,
                     take_over: false,
                     soft_control: p.soft_control,
+                    stable_response: false,
                 },
             })
         }

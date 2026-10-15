@@ -384,9 +384,14 @@ impl Tray {
         })
     }
     pub fn update(&self, text: String) {
-        if let Ok(mut t) = self.tip.lock() {
-            *t = text;
+        let Ok(mut t) = self.tip.lock() else {
+            return;
+        };
+        if *t == text {
+            return;
         }
+        *t = text;
+        drop(t);
         unsafe {
             PostMessageW(self.hwnd as HWND, UPDATE_MSG, 0, 0);
         }

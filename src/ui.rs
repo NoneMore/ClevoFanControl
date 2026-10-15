@@ -1002,6 +1002,7 @@ pub fn run(
     let mut last_indices = [usize::MAX; 2];
     let mut last_points = [(-1, -1); 2];
     while !stopped {
+        let tick_started = Instant::now();
         app::wait_for(0.05).ok();
         refresh_system_appearance();
         while let Ok(e) = nrx.try_recv() {
@@ -1021,11 +1022,19 @@ pub fn run(
             match event {
                 WorkerEvent::Sample(sample) => {
                     history.borrow_mut().push(sample);
-                    for canvas in &mut history_canvases {
-                        canvas.redraw();
+                    if win.shown() {
+                        for canvas in &mut history_canvases {
+                            canvas.redraw();
+                        }
                     }
                 }
                 WorkerEvent::Snapshot(s) => {
+                    if last_snapshot
+                        .as_ref()
+                        .is_some_and(|last| last.same_display(&s))
+                    {
+                        continue;
+                    }
                     running.set_label(&format!(
                         "运行：{}",
                         s.active.as_deref().unwrap_or("Global")
@@ -1038,11 +1047,12 @@ pub fn run(
                         let name = if ch == 0 { "CPU" } else { "GPU" };
                         if let Some(c) = s.sample.as_ref().and_then(|x| x.channels.get(ch)) {
                             format!(
-                                "{name}  {}°C   实际 {}%   {} RPM\n目标 {}% · 节点 {}",
+                                "{name}  {}°C   实际 {}%   {} RPM\n曲线 {}% · 请求 {}% · 节点 {}",
                                 c.temperature,
                                 c.duty,
                                 c.rpm.map_or("--".into(), |r| r.to_string()),
                                 s.targets.get(ch).map_or("--".into(), ToString::to_string),
+                                s.outputs.get(ch).map_or("--".into(), ToString::to_string),
                                 s.levels.get(ch).map_or("--".into(), ToString::to_string)
                             )
                         } else {
@@ -1587,6 +1597,9 @@ pub fn run(
                 last_indices[ch] = i;
             }
         }
+        // FLTK can return immediately without a shown window or during repaint
+        // traffic. Bound the channel-polling loop even while hidden in the tray.
+        std::thread::sleep(Duration::from_millis(50).saturating_sub(tick_started.elapsed()));
     }
     worker.join();
     drop(tray);

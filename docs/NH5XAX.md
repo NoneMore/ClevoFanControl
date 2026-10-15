@@ -58,6 +58,39 @@ C:\Program Files (x86)\ControlCenter\DCHU\InsydeDCHU.dll
 
 If that file is absent, normal DLL discovery is used.
 
+## Four-hour ordinary-workload CLI session
+
+On 2026-10-15, the CLI completed a four-hour session on this machine:
+
+- 10 minutes of firmware automatic baseline, followed by about 230 minutes of adaptive control
+- 2-second fan sampling: 7,198 samples per channel, with a maximum interval of 2.014 seconds
+- 13 curve adjustments; the final candidate remained in use for about 68 minutes
+- normal timed exit, successful firmware automatic restoration, and no hardware errors reported
+- CPU/GPU utilization and GPU power were recorded every 5 seconds after the first 172 seconds; no per-process attribution was collected
+
+| Measurement | CPU baseline | CPU adaptive | GPU baseline | GPU adaptive |
+| --- | ---: | ---: | ---: | ---: |
+| Mean temperature, °C | 59.8 | 58.5 | 45.5 | 45.6 |
+| 95th percentile temperature, °C | 66 | 65 | 47 | 52 |
+| Maximum sampled temperature, °C | 77 | 72 | 47 | 53 |
+| Mean duty, % | 33.0 | 35.2 | 44.0 | 44.0 |
+| Mean RPM | 3,061 | 3,243 | 2,372 | 2,374 |
+| Actual duty changes per hour | 888.0 | 4.4 | 24.0 | 3.7 |
+
+During adaptive control, CPU temperature was at or below 65°C in 96.6% of samples, and GPU temperature was at or below 50°C in 77.7% of samples. Actual duty changed 17 times for CPU and 14 times for GPU; individual changes were at most two percentage points. The last 68 minutes held GPU duty at 42%.
+
+The session used `stableResponse`: a 15-second median and 30-second EMA, a two-point duty deadband, a normal change interval of at least 30 seconds, and a 120-second wait before decreasing duty. Raw high temperatures bypass these delays. This response policy is also supported by the GUI; it must be preserved when applying the candidate configuration.
+
+Baseline and adaptive workloads differed, and the baseline also included development activity. These measurements demonstrate stable control under the observed ordinary workload, not a controlled cooling/noise comparison. CPU mean RPM increased, acoustic noise was not measured, and the unvisited high-temperature curve region remains unvalidated. The four-hour run used the CLI, not a four-hour GUI soak test.
+
+## GUI recovery and CPU usage follow-up
+
+After applying the candidate, a GUI report showed CPU fan duty at 100% while the curve target was about 36%. Toggling software takeover restored normal control. There was no raw GUI temperature log to establish the original trigger. Code inspection found that a high-temperature safety boost could otherwise decrease by only one percentage point every 30 seconds after the normal decrease delay.
+
+Safety boost recovery now requires 30 continuous seconds below the trigger minus 5°C, then restores the higher of pre-boost duty and current curve demand. Synthetic-temperature regression tests cover recovery, interrupted cooling and retained curve demand; this change was not tested by deliberately heating the machine. The GUI now displays both curve demand and requested duty, plus an explicit protection status.
+
+Repeated snapshot rendering and tray updates were suppressed, and the GUI polling loop was bounded while hidden. Short on-machine checks measured about 3.0–3.4% total CPU usage before the change, 0.10% with the updated window shown and 0.00% rounded while hidden, over six-second measurement windows. Closing hid the application without terminating control, reopening succeeded, and the saved curve and tray settings were preserved. These short checks do not replace a long GUI soak test.
+
 ## Still to validate
 
 The core read/write/restore protocol is validated, but the following should still be tested before treating the machine as fully production-proven:

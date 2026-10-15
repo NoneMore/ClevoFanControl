@@ -1,6 +1,6 @@
 use crate::{
     config::{Settings, wildcard},
-    control::{ChannelState, cool_complete, ramp},
+    control::{ChannelState, StableResponse, cool_complete, ramp},
     hardware::{Hardware, Sample},
 };
 use std::{
@@ -12,12 +12,26 @@ use std::{
 pub struct Snapshot {
     pub sample: Option<Sample>,
     pub targets: Vec<i32>,
+    pub outputs: Vec<i32>,
     pub levels: Vec<usize>,
     pub active: Option<String>,
     pub mode: String,
     pub error: Option<String>,
     pub force: bool,
     pub description: String,
+}
+impl Snapshot {
+    pub fn same_display(&self, other: &Self) -> bool {
+        self.sample.as_ref().map(|s| s.at) == other.sample.as_ref().map(|s| s.at)
+            && self.targets == other.targets
+            && self.outputs == other.outputs
+            && self.levels == other.levels
+            && self.active == other.active
+            && self.mode == other.mode
+            && self.error == other.error
+            && self.force == other.force
+            && self.description == other.description
+    }
 }
 
 pub enum Command {
@@ -90,6 +104,7 @@ fn run(
     let mut active: Option<String> = None;
     let mut cfg = settings.global.clone();
     let mut states = [ChannelState::default(); 2];
+    let mut responses = [StableResponse::default(), StableResponse::default()];
     let mut force = false;
     let mut owned = false;
     let mut suspended = false;
@@ -214,6 +229,7 @@ fn run(
         }
         if changed {
             states = [ChannelState::default(); 2];
+            responses = [StableResponse::default(), StableResponse::default()];
             next_sample = Instant::now();
             output.clear();
             last_written.clear();
@@ -269,7 +285,12 @@ fn run(
                                             } else {
                                                 &cfg.gpu_curve
                                             };
-                                            states[idx].evaluate(curve, c.temperature, &cfg)
+                                            let temperature = if cfg.stable_response {
+                                                responses[idx].temperature(c.temperature, s.at)
+                                            } else {
+                                                c.temperature
+                                            };
+                                            states[idx].evaluate(curve, temperature, &cfg)
                                         }
                                     })
                                     .collect();
@@ -329,7 +350,19 @@ fn run(
             }
             if !fault && !stale && (cfg.take_over || force) {
                 for (i, t) in targets.iter().enumerate() {
-                    output[i] = if cfg.soft_control && !force {
+                    output[i] = if cfg.stable_response && !force {
+                        if i == 2 {
+                            output[1]
+                        } else {
+                            responses[i].duty(
+                                output[i],
+                                *t,
+                                sample.as_ref().unwrap().channels[i].temperature,
+                                i,
+                                Instant::now(),
+                            )
+                        }
+                    } else if cfg.soft_control && !force {
                         ramp(output[i], *t)
                     } else {
                         *t
@@ -361,6 +394,8 @@ fn run(
                 "不可用"
             } else if force {
                 "强制冷却 95%"
+            } else if cfg.take_over && responses.iter().any(StableResponse::boosted) {
+                "高温保护 · 冷却后恢复曲线"
             } else if cfg.take_over {
                 "软件曲线"
             } else {
@@ -369,6 +404,7 @@ fn run(
             let _ = tx.send(Event::Snapshot(Snapshot {
                 sample: sample.clone(),
                 targets: targets.clone(),
+                outputs: if owned { output.clone() } else { vec![] },
                 levels: states.iter().map(|s| s.level + 1).collect(),
                 active: active.clone(),
                 mode: mode.into(),
@@ -487,6 +523,20 @@ mod tests {
         state.lock().unwrap().fail = false;
         until(&rx, |e| matches!(e, Event::Sample(Some(_))));
         stop(tx, rx, j);
+    }
+    #[test]
+    fn stable_profile_bypasses_delay_when_raw_temperature_is_high() {
+        let mut s = Settings::default();
+        s.global.stable_response = true;
+        s.global.take_over = true;
+        let (state, tx, rx, j) = start(s, vec![81, 50]);
+        until(
+            &rx,
+            |e| matches!(e,Event::Snapshot(s) if s.mode.starts_with("高温保护")),
+        );
+        assert_eq!(state.lock().unwrap().writes[0][0], 100);
+        stop(tx, rx, j);
+        assert_eq!(state.lock().unwrap().restores, 1);
     }
     #[test]
     fn third_fan_follows_gpu_and_exit_restores() {

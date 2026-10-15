@@ -117,6 +117,7 @@ jobs:
           $archivePath = Join-Path $env:GITHUB_WORKSPACE "$packageName.zip"
           $releaseFiles = @(
             '.\target\x86_64-pc-windows-msvc\release\clevo-fan-control.exe'
+            '.\target\x86_64-pc-windows-msvc\release\clevo-fan-cli.exe'
             '.\README.md'
             '.\THIRD_PARTY_NOTICES.md'
           )

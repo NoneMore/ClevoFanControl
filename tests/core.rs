@@ -125,6 +125,135 @@ fn raw_duty_and_official_rpm_conversion() {
 }
 
 #[test]
+fn stable_response_rejects_short_spikes_but_raw_heat_bypasses_delays() {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut response = StableResponse::default();
+    for seconds in 0..20 {
+        assert_eq!(
+            response.temperature(60, start + Duration::from_secs(seconds)),
+            60
+        );
+    }
+    assert_eq!(
+        response.temperature(78, start + Duration::from_secs(20)),
+        60
+    );
+    assert_eq!(response.duty(40, 70, 78, 0, start), 40);
+    assert_eq!(
+        response.duty(40, 40, 80, 0, start + Duration::from_secs(1)),
+        100
+    );
+}
+
+#[test]
+fn stable_response_limits_changes_and_waits_before_decreasing() {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut response = StableResponse::default();
+    assert_eq!(response.duty(40, 60, 60, 0, start), 40);
+    assert_eq!(
+        response.duty(40, 60, 60, 0, start + Duration::from_secs(29)),
+        40
+    );
+    assert_eq!(
+        response.duty(40, 60, 60, 0, start + Duration::from_secs(30)),
+        42
+    );
+    assert_eq!(
+        response.duty(42, 60, 60, 0, start + Duration::from_secs(31)),
+        42
+    );
+    assert_eq!(
+        response.duty(42, 25, 60, 0, start + Duration::from_secs(40)),
+        42
+    );
+    assert_eq!(
+        response.duty(42, 25, 60, 0, start + Duration::from_secs(159)),
+        42
+    );
+    assert_eq!(
+        response.duty(42, 25, 60, 0, start + Duration::from_secs(160)),
+        41
+    );
+    assert_eq!(
+        response.duty(41, 43, 60, 0, start + Duration::from_secs(200)),
+        41
+    );
+}
+
+#[test]
+fn high_temperature_boost_recovers_without_a_long_normal_ramp() {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut response = StableResponse::default();
+    assert_eq!(response.duty(36, 36, 80, 0, start), 100);
+    assert!(response.boosted());
+    assert_eq!(
+        response.duty(100, 36, 61, 0, start + Duration::from_secs(1)),
+        100
+    );
+    assert_eq!(
+        response.duty(100, 36, 61, 0, start + Duration::from_secs(30)),
+        100
+    );
+    assert_eq!(
+        response.duty(100, 36, 61, 0, start + Duration::from_secs(31)),
+        36
+    );
+    assert!(!response.boosted());
+}
+
+#[test]
+fn safety_boost_requires_continuous_cooling_and_preserves_curve_demand() {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut response = StableResponse::default();
+    assert_eq!(response.duty(35, 40, 75, 1, start), 100);
+    assert_eq!(
+        response.duty(100, 45, 60, 1, start + Duration::from_secs(1)),
+        100
+    );
+    assert_eq!(
+        response.duty(100, 45, 72, 1, start + Duration::from_secs(20)),
+        100
+    );
+    assert_eq!(
+        response.duty(100, 45, 60, 1, start + Duration::from_secs(21)),
+        100
+    );
+    assert_eq!(
+        response.duty(100, 45, 60, 1, start + Duration::from_secs(50)),
+        100
+    );
+    assert_eq!(
+        response.duty(100, 45, 60, 1, start + Duration::from_secs(51)),
+        45
+    );
+    assert!(!response.boosted());
+}
+
+#[test]
+fn stable_response_is_opt_in_and_survives_config_roundtrip() {
+    let mut settings = Settings::default();
+    let old = serde_json::to_vec(&settings).unwrap();
+    assert!(
+        !serde_json::from_slice::<Settings>(&old)
+            .unwrap()
+            .global
+            .stable_response
+    );
+    settings.global.stable_response = true;
+    let bytes = serde_json::to_vec(&settings).unwrap();
+    assert!(
+        serde_json::from_slice::<Settings>(&bytes)
+            .unwrap()
+            .global
+            .stable_response
+    );
+}
+
+#[test]
 fn appearance_settings_roundtrip_and_old_config_defaults() {
     let mut s = Settings::default();
     assert_eq!(s.theme, Theme::System);
