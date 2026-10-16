@@ -22,8 +22,6 @@ TraceRelease/
 *.exe
 *.dll
 
-docs/
-
 # Rust build and local configuration
 /target/
 /ClevoFanControl.x64.json

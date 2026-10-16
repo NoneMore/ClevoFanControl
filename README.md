@@ -1,181 +1,185 @@
 # ClevoFanControl
 
-面向 蓝天 / Clevo 笔记本的 Windows x64 原生风扇控制工具，使用 **Rust + FLTK** 编写，提供可视化风扇曲线、实时监控和按进程切换的配置预设。
+A native Windows x64 fan controller for Clevo laptops, written in **Rust + FLTK**, with visual fan curves, real-time monitoring, and process-based configuration presets.
 
-项目灵感来自 **myfancontrol**，但当前实现与其基本无关：界面、控制逻辑和硬件通信均已重新实现。新版通过已安装的厂商 ACPI 组件与 EC 通信，**不再使用或分发 `NTPortDrvSetup.exe`、`ClevoEcInfo.dll`、`NVGPU_DLL.dll`**，也不提供旧版 GPU 限频功能。
+The project was inspired by **myfancontrol**, but the current implementation is largely independent: the UI, control logic, and hardware communication have been reimplemented. This version communicates with the EC through installed vendor ACPI components. It **no longer uses or distributes `NTPortDrvSetup.exe`, `ClevoEcInfo.dll`, or `NVGPU_DLL.dll`**, and does not provide the legacy GPU frequency limiting feature.
 
-> 本项目由 **gpt-6-astra@medium** 开发。**Use at your own risk.** 风扇控制直接影响散热；请自行确认曲线和设备兼容性。本项目不保证所有 Clevo 机型可用，也不保证异常退出后能够恢复固件自动控制。
+> This project was developed by **gpt-6-astra@medium**. **Use at your own risk.** Fan control directly affects cooling; verify your curves and device compatibility. Compatibility with every Clevo model and restoration of firmware automatic control after abnormal termination are not guaranteed.
 
-## 语言与技术栈
+## Language and Technology Stack
 
-| 用途 | 技术 |
+| Purpose | Technology |
 | --- | --- |
-| 开发语言 | Rust，Edition 2024；工具链固定为 1.97.1 |
-| UI 界面 | fltk-rs / fltk-sys 1.5.23，使用 `fltk-bundled` 预编译 FLTK 库 |
-| 配置序列化 | Serde、serde_json |
-| Windows 集成 | windows-sys：托盘、单实例、进程枚举、系统外观和电源事件等 |
-| 厂商接口加载与校验 | libloading、sha2 |
-| 并发与调度 | Rust 标准库线程与消息通道，独立风扇控制工作线程 |
-| 构建与发布 | Cargo、winresource、MSVC / Windows SDK、GitHub Actions |
+| Programming language | Rust, Edition 2024; toolchain pinned to 1.97.1 |
+| UI | fltk-rs / fltk-sys 1.5.23 with the `fltk-bundled` precompiled FLTK library |
+| Configuration serialization | Serde, serde_json |
+| Windows integration | windows-sys: tray, single-instance enforcement, process enumeration, system appearance, power events, and more |
+| Vendor interface loading and validation | libloading, sha2 |
+| Concurrency and scheduling | Rust standard library threads and message channels; dedicated fan control worker thread |
+| Build and release | Cargo, winresource, MSVC / Windows SDK, GitHub Actions |
 
-依赖版本以 [Cargo.lock](Cargo.lock) 为准，工具链见 [rust-toolchain.toml](rust-toolchain.toml)。
+Dependency versions are defined by [Cargo.lock](Cargo.lock); see [rust-toolchain.toml](rust-toolchain.toml) for the toolchain.
 
-## 主要功能
+Start development with the [development guide](CONTRIBUTING.md). See the [architecture guide](docs/ARCHITECTURE.md) for module responsibilities and state boundaries.
 
-- **可视化曲线编辑**：CPU / GPU 独立曲线，每条支持 2–16 个节点；支持拖动、双击插入、键盘微调和数字编辑。
-- **控制策略**：阶梯或线性曲线、降温滞回、平滑调速；支持软件接管与归还固件自动控制。~~第三风扇使用 GPU 目标值~~。
-- **一次性强制冷却**：以 95% 占空比运行，直到温度低于设定阈值后结束；优先于普通曲线控制，不保存为常驻开关。
-- **实时监控**：显示温度、RPM、实际与目标占空比。CPU / GPU 历史图按采样点推进，支持 10–300 点，默认 60 点；缺测保留空位，恢复后以虚线连接。
-- **可调采样**：200–10000 ms，默认 2000 ms；实际周期受硬件调用耗时影响。
-- **预设与自动切换**：最多 32 个预设，支持手动应用、排序和按运行进程匹配；规则支持 `*` / `?` 通配符，按优先顺序选取首个匹配，无匹配时回到全局配置。自动切换不覆盖正在编辑的草稿。
-- **桌面集成与外观**：托盘显示 / 隐藏 / 退出、关闭转托盘、任务计划器登录启动；浅色、深色或跟随系统主题；系统字体、已安装字体选择和 8–16pt 字号。
-- **配置与故障反馈**：JSON 原子保存、旧配置导入；采样或写入失败后停止曲线写入并尝试恢复自动，界面显示错误。正常退出及睡眠暂停时也尝试恢复自动。
+## Main Features
 
-## 已验证环境
+- **Visual curve editing**: separate CPU/GPU curves with 2–16 nodes each; dragging, double-click insertion, keyboard adjustments, and numeric editing.
+- **Control policies**: stepped or linear curves, cooling hysteresis, and smooth duty changes; software takeover and return to firmware automatic control. ~~The third fan uses the GPU target~~.
+- **One-shot forced cooling**: runs at 95% duty until temperature drops below the configured threshold; takes priority over normal curves and is not saved as a persistent toggle.
+- **Real-time monitoring**: temperature, RPM, actual and target duty. CPU/GPU history advances by sample, supports 10–300 points, and defaults to 60. Missing samples leave gaps; a dashed line reconnects after recovery.
+- **Adjustable sampling**: 200–10000 ms, default 2000 ms; the actual period depends on hardware call duration.
+- **Presets and automatic switching**: up to 32 presets, manual application, ordering, and running-process matching. Rules support `*` / `?` wildcards; the first match in priority order wins, falling back to global configuration when none match. Automatic switching does not overwrite the editing draft.
+- **Desktop integration and appearance**: tray show/hide/exit, close to tray, Task Scheduler login startup; light, dark, or system theme; system or installed fonts and 8–16pt sizing.
+- **Configuration and fault feedback**: atomic JSON saves and legacy import; sampling or write failures stop curve writes and attempt automatic restoration, with an error shown in the UI. Normal exit and suspension for sleep also attempt restoration.
 
-以下为本机验证环境，**不是通用兼容性列表**。
-| 项目 | 版本 / 型号 | 说明 |
+## Validated Environment
+
+The following describes one locally validated environment, **not a general compatibility list**.
+
+| Item | Version / model | Evidence |
 | --- | --- | --- |
-| 操作系统 | Windows 11 专业工作站版，24H2，26100.7462，x64 | 本机系统查询 |
-| 主板 / 机型 | Notebook `NP5x_6x_7x_SNx` | 本机 SMBIOS；未提供有效的主板修订版本 |
-| BIOS | `1.07.27RTR6` | 本机 SMBIOS |
-| EC | `1.07.07TR3` |本机 EC |
-| Control Center | Control Center Package / ControlCenter 3.0 Package `v6.021` | 本机安装记录 |
-| FnKey / 热键与 OSD 包 | `CLEVOCO.FnhotkeysandOSD` `7.88.1.0` | 应用包与 `FnKey.exe` 文件版本一致 |
-| ACPI Bridge 驱动 | `AcpiBridge.sys` `1.0.0.9` | 设备 `ACPI\CLV0001\1` |
-| 实际验证的通信 DLL | FnKey 目录中的 x64 `InsydeDCHU.dll` `1.0.0.1` | 二进制由 SHA256 白名单识别 |
-| 物理风扇 | CPU / GPU 双风扇 | 第三风扇仅经过模拟测试 |
+| Operating system | Windows 11 Pro for Workstations, 24H2, 26100.7462, x64 | Local system query |
+| Board / model | Notebook `NP5x_6x_7x_SNx` | Local SMBIOS; no valid board revision reported |
+| BIOS | `1.07.27RTR6` | Local SMBIOS |
+| EC | `1.07.07TR3` | Local EC |
+| Control Center | Control Center Package / ControlCenter 3.0 Package `v6.021` | Local installation records |
+| FnKey / hotkey and OSD package | `CLEVOCO.FnhotkeysandOSD` `7.88.1.0` | Package and `FnKey.exe` versions agree |
+| ACPI Bridge driver | `AcpiBridge.sys` `1.0.0.9` | Device `ACPI\CLV0001\1` |
+| Validated communication DLL | x64 `InsydeDCHU.dll` `1.0.0.1` in the FnKey directory | Binary identified by SHA256 allowlist |
+| Physical fans | CPU/GPU dual fans | Third fan tested only in simulation |
 
-实际硬件验证使用的 FnKey 版 `InsydeDCHU.dll` SHA256：
+SHA256 of the FnKey `InsydeDCHU.dll` used for hardware validation:
 
 ```text
 75a47020d3a9d052e94dcb4e3ad61fb69f20177dd46e20c9a20883d92b83981b
 ```
 
-相同文件版本不代表相同二进制。程序优先查找已安装 FnKey 包中的 DLL，其次查找 Control Center 目录；只有匹配代码白名单的 DLL 才会加载。更新官方组件后，可能需要重新核对协议和哈希，不能仅凭 `1.0.0.1` 判断兼容。
+Identical file versions do not imply identical binaries. The program first searches the installed FnKey package, then Control Center directories, and loads only DLLs matching the code allowlist. Official component updates may require reviewing the protocol and hash again; version `1.0.0.1` alone does not establish compatibility.
 
-既有实机记录已验证双风扇指定占空比写入、读回实际值和恢复自动；测试期间 FnKey / Control Center 后台保持运行。其他机型、BIOS、第三物理风扇，以及真实睡眠 / 恢复、注销关机、实际登录触发、Explorer 重启、跨屏 DPI 和长期稳定性，仍需对应场景验证。
+Existing hardware records validate specified-duty writes to both fans, actual-value readback, and automatic restoration while FnKey/Control Center remained running in the background. Other models, BIOS versions, a third physical fan, real sleep/resume, logoff/shutdown, actual login triggers, Explorer restart, cross-monitor DPI, and long-term stability still require validation in the corresponding scenarios.
 
-## 使用
+## Usage
 
-1. 安装与本机匹配的官方 Control Center / FnKey 及 ACPI Bridge 驱动；程序不附带这些厂商组件。(一般系统都有了）
-2. 准备 Microsoft Visual C++ x64 运行库（VCRUNTIME140.dll / UCRT）。将程序放在可写目录，以便保存配置。（一般也都有了）
-3. 运行 `clevo-fan-control.exe`。Release 版会请求管理员权限。
-4. 首次启动默认不接管；编辑曲线并点击“保存并应用”，再根据需要启用“软件接管”。关闭接管后归还固件自动控制。
+The interface currently uses Chinese labels. Action names below are English translations of those labels.
 
-占空比不等于恒定 RPM。使用前应按设备散热能力调整。
+1. Install the official Control Center/FnKey and ACPI Bridge driver matching your machine; vendor components are not bundled. They are usually already installed.
+2. Ensure the Microsoft Visual C++ x64 runtime (VCRUNTIME140.dll / UCRT) is available. Place the program in a writable directory so it can save configuration. The runtimes are usually already installed.
+3. Run `clevo-fan-control.exe`. Release builds request administrator privileges.
+4. First launch leaves takeover disabled. Edit curves and click Save and Apply, then enable Software Takeover as needed. Disabling takeover returns control to firmware automatic mode.
 
-主界面的编辑草稿与正在运行的配置相互独立。“保存并应用”提交编辑内容；接管开关不会顺带提交草稿；自动预设切换也不会覆盖草稿。“恢复全局”使用内存中已保存的全局配置，“重新加载”从磁盘读取配置。
+Duty is not a constant RPM. Adjust curves for your device's cooling capacity before use.
 
-### 配置与迁移
+The main window's editing draft is independent of the active configuration. Save and Apply submits edits; the takeover toggle does not implicitly submit them, and automatic preset switching does not overwrite them. Restore Global uses the saved global configuration in memory; Reload reads configuration from disk.
 
-配置位于程序同目录的 `ClevoFanControl.x64.json`，采用 `schemaVersion: 1`，全局设置与预设存放于同一个文件。文件大小限制为 64 KiB，拒绝未知字段、重复字段、错误类型和越界数据。
+### Configuration and Migration
 
-“导入旧配置”可选择旧版 `ClevoFanControl.json`，并读取同目录的 `ClevoFanControl.presets.json`（如果存在）。导入不会修改原文件，只更新草稿，并关闭导入配置的接管、自启动和自动匹配，不恢复旧强冷开关；保存后才生效。
+Configuration is stored beside the executable as `ClevoFanControl.x64.json`, using `schemaVersion: 1`. Global settings and presets share one file. The size limit is 64 KiB; unknown fields, duplicate fields, incorrect types, and out-of-range data are rejected.
 
-## 工作原理
+Import Legacy Configuration accepts the old `ClevoFanControl.json` and reads `ClevoFanControl.presets.json` from the same directory if present. Import preserves the original files and only updates the draft. The imported configuration has takeover, auto-start, and automatic matching disabled; the old forced cooling toggle is not restored. Changes take effect only after saving.
+
+## How It Works
 
 ```text
-FLTK 界面：编辑草稿、提交命令、展示快照与历史
-    ↕ Rust 消息通道
-控制工作线程：采样、预设匹配、曲线计算、写入与读回检查
+FLTK UI: edit draft, submit commands, display snapshots and history
+    ↕ Rust message channels
+Control worker: sampling, preset matching, curve calculation, writes and readback checks
     ↓
-已安装的 x64 InsydeDCHU.dll
+Installed x64 InsydeDCHU.dll
     ↓
-AcpiBridge.sys → ACPI DCHU._DSM → PK04 / EC.ECMD → 风扇
+AcpiBridge.sys → ACPI DCHU._DSM → PK04 / EC.ECMD → fans
 ```
 
-程序使用完整路径和受限 DLL 搜索加载通过哈希校验的厂商库。通过 `0x0C` / `0x0D` 获取风扇数量、温度、实际占空比和转速计数器；RPM 按官方 FanSpeedSetting 界面的计数器公式换算。
+The program loads the hash-validated vendor library using its full path and a restricted DLL search. Commands `0x0C` / `0x0D` read fan count, temperature, actual duty, and tachometer counters. RPM is calculated with the counter formula used by the official FanSpeedSetting UI.
 
-写入通过 `PK04(1)` 逐通道发送 EC `C1` 命令，避免使用会同时影响四个通道的 `0x68` 批量写入；归还固件自动控制使用 `0x69` 位掩码。算法与界面不直接操作底层 I/O 端口，也不安装自写内核驱动。
+Writes send EC `C1` commands per channel through `PK04(1)`, avoiding the `0x68` bulk write that affects four channels at once. Returning control to firmware uses the `0x69` bitmask. The algorithms and UI do not directly access low-level I/O ports or install a custom kernel driver.
 
-**程序不独占 EC。** FnKey / Control Center 仍可能在启动、恢复或配置变化时覆盖目标值；控制线程通过后续采样检查实际占空比并纠正偏差。这不等于能够阻止其他程序写入，也不保证崩溃、强杀或驱动挂起时恢复自动。协议与控制权调查见 [硬件研究记录](CONTROL_OWNERSHIP_RESEARCH.md)。
+**The program does not have exclusive EC ownership.** FnKey/Control Center may overwrite targets at startup, resume, or configuration changes. The control worker checks actual duty in later samples and corrects deviations. This does not prevent other programs from writing, nor guarantee automatic restoration after a crash, forced termination, or a hung driver. See the [hardware research record](CONTROL_OWNERSHIP_RESEARCH.md) for protocol and ownership analysis.
 
-## 构建与测试
+## Build and Test
 
-需要 Windows x64、Rust / rustup，以及带 MSVC C++ 工具链和 Windows SDK 的 Build Tools。工具链由 `rust-toolchain.toml` 固定；首次构建需要下载 Rust 依赖及 `fltk-bundled` 预编译库。
+Requires Windows x64, Rust/rustup, and Build Tools with the MSVC C++ toolchain and Windows SDK. `rust-toolchain.toml` pins the toolchain. The first build downloads Rust dependencies and the `fltk-bundled` precompiled library.
 
-在项目根目录使用 PowerShell 执行：
+Run in PowerShell from the repository root:
 
 ```powershell
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
-cargo build --locked --release --target x86_64-pc-windows-msvc
+pwsh -NoProfile -File .\scripts\check.ps1 -Release
 ```
 
-产物位于 `target/x86_64-pc-windows-msvc/release/clevo-fan-control.exe`。GitHub Actions 使用同一组检查；手动发布工作流要求 tag 与 `Cargo.toml` 的版本一致。发布包包含程序、README、第三方声明和许可证目录，不包含厂商 DLL / 驱动。
+The check script requires PowerShell 7. It runs `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked` by default; `-Release` adds a Windows x64 Release build. See the development guide for individual checks and environment setup.
 
-当前自动化测试覆盖曲线与滞回、强冷、第三风扇跟随、故障恢复、外部覆写后的纠正、取消接管、配置校验与导入、历史图和部分界面外观行为。它们使用模拟硬件，不能替代真实硬件验收。
+The GUI output is `target/x86_64-pc-windows-msvc/release/clevo-fan-control.exe`. GitHub Actions uses the same check script. The manual release workflow requires the tag to match the `Cargo.toml` version. Release packages include the programs, README, third-party notices, and license directory, without vendor DLLs/drivers.
 
-开发诊断命令：
+Current automated tests cover curves and hysteresis, forced cooling, third-fan following, fault recovery, correction after external overwrites, takeover cancellation, configuration validation and import, history charts, and some UI appearance behavior. They use simulated hardware and do not replace hardware acceptance.
+
+Development diagnostics:
 
 ```powershell
-cargo run -- --demo                 # 模拟硬件，打开完整界面
-cargo run -- --demo --smoke         # 模拟界面启动、临时截图与退出流程
-cargo run -- --probe                # 真实硬件只读采样，输出 DLL 路径、哈希和遥测
-cargo run -- --hardware-check       # 真实写入 40%，等待 2 秒读回，再尝试恢复自动
+cargo run -- --demo                 # Simulated hardware with the full UI
+cargo run -- --demo --smoke         # Demo startup, temporary screenshot, and exit
+cargo run -- --probe                # Read-only hardware sample: DLL path, hash, and telemetry
+cargo run -- --hardware-check       # Write 40%, wait 2 seconds, read back, then attempt automatic restoration
 ```
 
-Debug 使用 `asInvoker`，Release 使用 `requireAdministrator`；真实硬件诊断可能需要从管理员终端运行。日常图形界面建议使用 Release，它不会附带控制台窗口；Debug 默认保留控制台供诊断使用。`--hardware-check` 会实际改变风扇占空比，不属于普通测试命令。`--smoke` 将截图写入系统临时目录；既有记录中曾出现退出超时，不能视为所有 GUI 场景均已通过。普通运行不生成错误日志或截图文件。
+Debug uses `asInvoker`; Release uses `requireAdministrator`. Real hardware diagnostics may require an administrator terminal. Release is recommended for routine GUI use because it has no console window; Debug keeps the console for diagnostics. `--hardware-check` changes fan duty and is not a routine test command. `--smoke` writes a screenshot to the system temporary directory; earlier records included an exit timeout, so it does not establish acceptance for all GUI scenarios. Normal execution does not generate error logs or screenshots.
 
-### CLI 采样与常规负载调优
+### CLI Sampling and Ordinary-Workload Tuning
 
-另有独立控制台程序 `clevo-fan-cli.exe`，Debug 产物位于 `target/debug/`，Release 与 GUI 同目录。它和 GUI 共用单实例锁，运行前先正常退出 GUI，并关闭其他工具的软件接管。
+The separate console program is `clevo-fan-cli.exe`. Debug outputs are under `target/debug/`; Release outputs share the GUI directory. It shares the GUI's single-instance lock. Exit the GUI normally and disable other tools' software takeover before running it.
 
 ```powershell
 cargo build --locked --bin clevo-fan-cli
-# 只读记录 4 小时，不接管风扇；输出目录每轮使用不同名称
+# Record for 4 hours without taking over fans; use a unique output directory each time
 .\target\debug\clevo-fan-cli.exe monitor --out .\target\tuning\monitor-01
-# 4 小时调优，前 10 分钟为固件自动基线；CPU 优先 60°C，允许 60–65°C 稳定区间，GPU 约 50°C
+# Tune for 4 hours with a 10-minute firmware baseline; CPU target 60°C (stable band 60–65°C), GPU about 50°C
 .\target\debug\clevo-fan-cli.exe tune --out .\target\tuning\session-01 --cpu-target 60 --gpu-target 50
-# 查询记录 / 提前停止（stop 不需要取得硬件锁）
+# Inspect records / stop early (stop does not need the hardware lock)
 .\target\debug\clevo-fan-cli.exe status --out .\target\tuning\session-01
 .\target\debug\clevo-fan-cli.exe stop --out .\target\tuning\session-01
 ```
 
-`--duration-secs` 默认 14400，`--baseline-secs` 默认 600，`--interval-secs` 默认 2；真实调优的基线至少 60 秒。可用 `--config FILE` 指定配置、`--demo` 验证模拟流程、`--help` 查看参数。仅 `tune` 会写入硬件，目前要求两个物理风扇。`monitor` 支持 1–3 个通道。
+Defaults: `--duration-secs` is 14400, `--baseline-secs` is 600, and `--interval-secs` is 2. Real tuning requires at least a 60-second baseline. Use `--config FILE` for a configuration, `--demo` for simulated flow, and `--help` for arguments. Only `tune` writes hardware and currently requires two physical fans; `monitor` supports 1–3 channels.
 
-调优以转速稳定为优先：温度经过 15 秒中位数与 30 秒 EMA 滤波；2 个百分点的占空比死区；普通变化间隔至少 30 秒，每次升速最多 2 个百分点、降速最多 1 个百分点，降速还需等待 120 秒。持续偏热时加快升速，原始 CPU ≥80°C / GPU ≥75°C 时绕过滤波与等待，直接请求 100%。保护触发后，温度需持续 30 秒低于触发线 5°C，才恢复至保护前占空比与当前曲线需求的较高值，避免满速沿普通降速节奏持续很久。GUI 会分别显示曲线目标与实际请求，并标明高温保护状态。CPU ≥85°C / GPU ≥80°C 则终止本轮并尝试恢复固件自动。这些是本轮实验保护线，不是芯片厂商额定温度。
+Tuning prioritizes stable fan speed: temperatures use a 15-second median and 30-second EMA; duty has a two-percentage-point deadband. Normal changes are at least 30 seconds apart, increasing by at most two percentage points or decreasing by at most one; decreases also wait 120 seconds. Sustained excess heat accelerates increases. Raw CPU ≥80°C / GPU ≥75°C bypasses filtering and delays to request 100%. After protection triggers, temperature must remain at least 5°C below the trigger for 30 seconds before restoring the higher of pre-protection duty and current curve demand, avoiding a prolonged full-speed period under ordinary decrease limits. The GUI displays curve demand and actual request separately, with a high-temperature protection indicator. CPU ≥85°C / GPU ≥80°C ends the session and attempts firmware automatic restoration. These are experimental protection thresholds for this session, not chip vendor temperature ratings.
 
-每 3 分钟评估一个窗口：仅调整实际温区附近的曲线节点，低温稳定时降 2 个百分点、持续偏热时升 4 个百分点；CPU 目标允许 +5°C 稳定区间，GPU 允许 +2°C。曲线种子下限为 CPU 25%、GPU 40%，高温节点保留。开始接管或恢复控制时，先直接按曲线设置占空比，避免继承固件停转或临时高转速后长时间偏离曲线；原始高温保护仍优先。后续变化使用稳定调速节奏。CPU、GPU 分别调优，不假定两路散热能力可以互相替代。该方法未测量声压或音调，也不能把常规负载结果当作所有负载下的最优曲线。
+A window is evaluated every three minutes. Only curve nodes near the visited temperature range are adjusted: decrease by two percentage points when cool and stable; increase by four when persistently hot. The CPU target allows a +5°C stable band; GPU allows +2°C. Curve seed minimums are CPU 25% and GPU 40%; high-temperature nodes are preserved. On takeover or control resumption, duty is initialized directly from the curve to avoid prolonged deviation inherited from firmware fan-stop or temporary high speed; raw-temperature protection still takes precedence. Subsequent changes use the stable response cadence. CPU and GPU are tuned separately without assuming their cooling capacity is interchangeable. The method does not measure sound pressure or tone, and ordinary-workload results do not establish an optimal curve for all workloads.
 
-每轮输出：
+Each session outputs:
 
-- `telemetry.csv`：时间、阶段、通道、原始温度、实际占空比、RPM 和下一次请求占空比；每次采样刷新。
-- `events.jsonl`：开始、曲线调整、结束原因。
-- `report.json`：每 30 秒更新状态，基线与调优阶段分开统计温度分布、平均值所需的总和、占空比变化次数与总变化量；结束时写入恢复结果。不同阶段负载可能不同，不能直接据此宣称节省多少噪声或改善多少散热。
-- `candidate.json`：可用的新版本配置，启用 `stableResponse`，保留温度滤波与调速节奏；接管、自启动和自动匹配关闭，不覆盖原配置。修改曲线时原子更新，结束时再次保存。
-- `session.json`：本轮进程与模式；`stop` 创建 `STOP` 请求，需检查 `report.json` 确认最终状态和恢复结果。
-- `load.csv`：真实模式自动启动独立记录进程，每 5 秒采样 CPU 总利用率，以及 NVIDIA GPU 0 的核心利用率、显存控制器利用率、功耗、核心 / 显存频率、温度和查询耗时。
+- `telemetry.csv`: time, phase, channel, raw temperature, actual duty, RPM, and next requested duty; flushed on every sample.
+- `events.jsonl`: start, curve adjustments, and termination reason.
+- `report.json`: status updated every 30 seconds. Baseline and adaptive phases separately track temperature distributions, sums needed for means, duty change counts, and total change magnitude. Restoration results are written at completion. Workloads may differ between phases, so these figures alone cannot establish noise savings or cooling improvements.
+- `candidate.json`: a usable current-format configuration with `stableResponse` enabled, retaining temperature filtering and change cadence. Takeover, auto-start, and automatic matching are disabled; it does not overwrite the original configuration. Updated atomically when curves change and saved again at completion.
+- `session.json`: session process and mode. `stop` creates a `STOP` request; inspect `report.json` for final state and restoration results.
+- `load.csv`: real mode starts a separate recorder that samples total CPU utilization every five seconds, plus NVIDIA GPU 0 core utilization, memory controller utilization, power, core/memory clocks, temperature, and query duration.
 
-负载记录使用 Windows 总内核 / 用户 / 空闲时间差分计算 CPU 利用率，不包含 CPU 封装功耗；显存控制器利用率不是显存容量占用率。用 `unix_ms` 对齐风扇记录。GPU 查询依赖已安装 NVIDIA 驱动提供的 `nvidia-smi.exe`；缺测保留空字段和错误码，不填成零。查询超时或失败不影响 EC 控制，记录器错误见 `load.stderr.log`。
+Load recording calculates CPU utilization from differences in Windows aggregate kernel/user/idle time; CPU package power is not included. Memory controller utilization is not memory capacity usage. Align fan records using `unix_ms`. GPU queries use `nvidia-smi.exe` from the installed NVIDIA driver. Missing measurements retain empty fields and error codes rather than becoming zero. Query timeouts or failures do not affect EC control; recorder errors appear in `load.stderr.log`.
 
-记录进程在控制进程退出或报告结束后自动退出，`--demo` 不启动负载采样。也可对尚未记录负载的运行使用 `clevo-fan-cli load --out DIR --interval-secs 5`，同一目录仅允许一个负载记录器。当前调优算法依据温度反馈，负载数据用于之后按相似负载比较结果，不采集进程级负载。
+The recorder exits when the control process exits or its report indicates completion. `--demo` does not start load recording. For a run without a recorder, use `clevo-fan-cli load --out DIR --interval-secs 5`; only one load recorder is allowed per directory. The tuning algorithm currently uses temperature feedback; load data supports later comparisons at similar loads. Per-process load is not collected.
 
-`stableResponse` 为可选配置字段，旧配置默认关闭。GUI 控制线程同样支持它，优先于原来的“平滑调速”开关。界面目前没有对应开关；应用候选配置时，先退出程序并备份同目录的 `ClevoFanControl.x64.json`，再将 `candidate.json` 复制到该位置并改为这个文件名。重新启动后启用“软件接管”并“保存并应用”，即可保存日常接管配置；自启动仍需单独设置。
+`stableResponse` is optional and defaults to disabled for old configurations. The GUI worker also supports it, taking precedence over the original Smooth Control toggle. There is currently no dedicated UI toggle. To apply a candidate, first exit the program and back up `ClevoFanControl.x64.json` beside the executable, then copy `candidate.json` there under that filename. Restart, enable Software Takeover, and use Save and Apply to save the configuration for everyday takeover. Auto-start is configured separately.
 
-采样失败、采样中断（包括恢复后的长间隔）、连续读回不匹配或转速计异常会结束调优并尝试恢复自动。Ctrl+C、停止请求和到时退出也执行恢复。强杀进程、断电、DLL / 驱动永久挂起仍无法保证恢复；程序不会修改系统睡眠设置。
+Sampling failure, sampling interruption (including a long gap after resume), repeated readback mismatches, or tachometer anomalies end tuning and attempt automatic restoration. Ctrl+C, stop requests, and timed exit also perform restoration. Forced termination, power loss, or a permanently hung DLL/driver still cannot guarantee restoration. The program does not change system sleep settings.
 
-NH5xAx 的一次 4 小时常规负载验证结果见 [本机验证记录](docs/NH5XAX.md#four-hour-ordinary-workload-cli-session)。
+See the [local validation record](docs/NH5XAX.md#four-hour-ordinary-workload-cli-session) for one four-hour NH5xAx ordinary-workload session.
 
-## 引用与感谢
+## References and Acknowledgments
 
-感谢当前实现使用的技术栈及其维护者：
+Thanks to the technologies and maintainers used by the current implementation:
 
 - [Rust / Cargo](https://www.rust-lang.org/)
-- [FLTK](https://www.fltk.org/) 与 [fltk-rs](https://github.com/fltk-rs/fltk-rs)
-- [Serde](https://serde.rs/) 与 [serde_json](https://github.com/serde-rs/json)
+- [FLTK](https://www.fltk.org/) and [fltk-rs](https://github.com/fltk-rs/fltk-rs)
+- [Serde](https://serde.rs/) and [serde_json](https://github.com/serde-rs/json)
 - [windows-rs / windows-sys](https://github.com/microsoft/windows-rs)
 - [libloading](https://github.com/nagisa/rust_libloading)
 - [RustCrypto / sha2](https://github.com/RustCrypto/hashes)
 - [winresource](https://github.com/BenjaminRi/winresource)
 
-保留原项目的引用与感谢：
+References and acknowledgments retained from the original project:
 
 1. [zuyan9 / RLECViewer](https://github.com/zuyan9/RLECViewer/tree/master)
 2. [wangsihan158 / myfancontrol](https://github.com/wangsihan158/myfancontrol)
 3. [xl-Synapse / MyFanControl](https://github.com/xl-Synapse/MyFanControl)
-4. [百度贴吧原帖](https://tieba.baidu.com/p/5971634018)
+4. [Original Baidu Tieba thread](https://tieba.baidu.com/p/5971634018)
 
-沿用的图标位于 `assets/`。旧 MFC 源码及旧二进制已从当前源码树移除，可在 Git branch 'codex/backup-before-rewrite' 中查阅。第三方许可及厂商组件的分发边界见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [licenses/](licenses/)。
+Inherited icons are in `assets/`. Legacy MFC source and binaries have been removed from the current source tree and remain in Git branch 'codex/backup-before-rewrite'. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [licenses/](licenses/) for third-party licensing and vendor component distribution boundaries.

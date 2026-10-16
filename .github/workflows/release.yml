@@ -94,14 +94,7 @@ jobs:
           $meta = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ($env:RELEASE_TAG -ne "v$($meta.packages[0].version)") { throw 'Tag must match Cargo.toml version.' }
-          cargo fmt --check
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo clippy --locked --all-targets -- -D warnings
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --locked
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo build --locked --release --target x86_64-pc-windows-msvc
-          exit $LASTEXITCODE
+          ./scripts/check.ps1 -Release
 
       - name: Package release
         id: package

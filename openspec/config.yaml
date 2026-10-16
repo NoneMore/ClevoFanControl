@@ -1,0 +1,39 @@
+schema: spec-driven
+
+context: |
+  Write all repository documentation and planning artifacts in English. Use Chinese only for final user-facing deliverables and handoff summaries; preserve code identifiers, commands, and required OpenSpec structure markers.
+  Target a native Windows x64 desktop tool; explicitly scope cross-platform support in the proposal.
+  This is a Rust + FLTK application with a GUI and CLI. They share control algorithms, configuration, and hardware interfaces, but organize control sessions separately.
+  Fan control changes must account for cooling safety, returning control, and fault recovery. Do not promise automatic restoration after a crash, forced termination, or a hung driver.
+  Limit model, BIOS, EC, and vendor DLL compatibility conclusions to existing validation evidence. Simulated tests are not hardware validation.
+  Users install vendor DLLs and drivers through official components; do not include them in source or release packages.
+  See README.md for user behavior, CONTRIBUTING.md for development and checks, and docs/ARCHITECTURE.md for module responsibilities and state boundaries.
+  Consult CONTROL_OWNERSHIP_RESEARCH.md and validation records under docs/ for hardware evidence, preserving dates, baselines, and outstanding validation items. Use the current repository for versions and hardware allowlists rather than duplicating them here.
+
+rules:
+  proposal:
+    - State the concrete problem, expected behavior, change scope, and non-goals.
+    - For hardware protocols, control policies, or configuration formats, identify compatibility impacts and required validation scope.
+  design:
+    - Record key decisions, alternatives, and tradeoffs; cover fault, exit, and sleep/resume paths for control flow changes.
+    - Assess GUI and CLI impacts and validation separately when changing shared control algorithms or hardware interfaces.
+    - Explain legacy configuration compatibility, validation failure behavior, and original file protection for persistence or import changes.
+    - Distinguish the editing draft, saved configuration, and worker's active configuration for GUI configuration flow changes; explain submission, persistence, and activation timing.
+    - Clearly distinguish existing hardware evidence, simulated validation, and unverified assumptions.
+  specs:
+    - Preserve required OpenSpec structure markers, including Requirement, Scenario, WHEN, THEN, and MUST or SHALL.
+    - Requirements must be observable and verifiable; cover normal behavior, boundary conditions, and failure recovery as appropriate to the change scope.
+  tasks:
+    - Use numbered, checkable tasks with explicit completion conditions, ordered by dependency.
+    - Separate static checks, simulated tests, GUI checks, and hardware acceptance as needed, and state the required environment.
+
+operations:
+  apply:
+    guidance:
+      - Follow CONTRIBUTING.md and the change scope for checks; run pwsh -NoProfile -File ./scripts/check.ps1 for Rust changes, adding -Release for build, resource, script, or release workflow changes. Check content, links, and diffs for documentation-only changes.
+      - Prefer simulated hardware for routine verification; --hardware-check and real tune write fan settings and require user authorization for the corresponding hardware operations.
+      - List checks actually performed, their results, and unverified scenarios in the handoff; do not present simulated results as hardware conclusions.
+  archive:
+    guidance:
+      - Check task completion and consistency between specifications and implementation; explicitly retain unverified hardware compatibility boundaries.
+      - Briefly report the archive result and remaining manual acceptance items.
