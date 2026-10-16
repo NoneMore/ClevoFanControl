@@ -60,6 +60,21 @@ The shared check script performs only automated checks and an optional build. GU
 
 Hardware writes change fan state. Establish the machine, operations, and restoration steps before validation. Record the model, BIOS/EC, vendor components, DLL hash, operations, observations, and restoration result. Automated tests or one successful hardware test do not establish acceptance for other models, sleep/resume, or long-term operation. Restoration after forced termination or a hung driver is not guaranteed.
 
+### GUI History Acceptance
+
+`tests/gui_history.rs` includes an explicitly ignored desktop test that runs the actual GUI with simulated hardware and drives its controls through FLTK callbacks. Routine checks compile it but do not run its desktop workflow. Exit other controllers normally first: the test acquires the same single-instance lock. Use a separate output/configuration directory for each case:
+
+```powershell
+$env:CARGO_TARGET_DIR = Join-Path $PWD 'target/dev-check'
+$env:CFC_GUI_ROOT = Join-Path $PWD 'target/verification/gui-history-unique-session'
+$env:CFC_GUI_CASE = 'functional'
+cargo test --locked --test gui_history desktop_history_workflow -- --ignored --exact --nocapture
+```
+
+Cases `functional`, `save-failure`, `invalid`, and `open-failure` cover preference/full-save ordering, hidden recording, reload/import, failed preference persistence and output errors. `restart` reuses an existing recording-enabled case directory and verifies startup from its saved preference. The functional case saves its explicit full-save edits and discards its final imported draft; it never touches the ordinary executable's configuration. The failure cases deliberately obstruct paths only inside their isolated case directory.
+
+For performance, build the same test with `--release --target x86_64-pc-windows-msvc`, run it from an administrator terminal as required by the Release manifest, and set `CFC_GUI_CASE=performance`, `CFC_GUI_SECONDS=65`, `CFC_GUI_INTERVAL=2` or `0.2`, `CFC_GUI_RECORD=true` or `false`, and `CFC_GUI_HIDDEN=true` or `false`. Measure at least 60 seconds after startup warmup in each matched case. The test verifies both FLTK and native Windows visibility and writes `visibility.json` and `shutdown.json`. Record process CPU time normalized by logical processor count, working-set trends, file sizes, sample intervals and drops. A short simulated benchmark does not validate real DLL timing, sleep/resume or long-term hardware behavior.
+
 ## Changes and Review
 
 - For configuration changes, check legacy defaults, strict validation, migration, and original file protection. For control changes, check fault, takeover cancellation, exit, and sleep/resume paths.

@@ -1,4 +1,6 @@
+#[path = "ui/dialogs.rs"]
 mod dialogs;
+#[path = "ui/history.rs"]
 mod history;
 // Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4.
 // Hallmark:  Cobalt workbench, system or installed UI font. P4 H4 E4 S5 R5 V4.
@@ -6,6 +8,8 @@ use clevo_fan_control::{
     config::{self, ControlConfig, Point, Preset, Settings, Theme},
     control::linear,
     platform::{self, NativeEvent, Tray},
+    preferences::CommittedSettings,
+    recording::Recorder,
     worker::{Command, Event as WorkerEvent, Snapshot, Worker},
 };
 use fltk::{
@@ -43,6 +47,37 @@ thread_local! {
     static FONT_FAMILY: RefCell<Option<String>> = const { RefCell::new(None) };
     static APPLIED_FONT: RefCell<Option<String>> = const { RefCell::new(None) };
     static DARK: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod acceptance {
+    use super::*;
+    thread_local! { static WINDOWS: RefCell<Vec<Window>> = const { RefCell::new(Vec::new()) }; }
+    thread_local! { static IMPORT: RefCell<Option<PathBuf>> = const { RefCell::new(None) }; }
+    pub fn set_import(path: PathBuf) {
+        IMPORT.with_borrow_mut(|value| *value = Some(path));
+    }
+    pub(super) fn import_path() -> Option<PathBuf> {
+        IMPORT.with_borrow(Clone::clone)
+    }
+    pub fn windows() -> Vec<Window> {
+        WINDOWS.with_borrow(Clone::clone)
+    }
+    pub(super) fn register(main: Window, settings: Window) {
+        WINDOWS.with_borrow_mut(|windows| *windows = vec![main, settings]);
+    }
+}
+
+fn legacy_import_path() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = acceptance::import_path() {
+        return path;
+    }
+    let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
+    chooser.set_filter("JSON\t*.json");
+    chooser.show();
+    chooser.filename()
 }
 fn theme_value(theme: Theme) -> i32 {
     match theme {
@@ -135,6 +170,7 @@ enum Action {
     Edit,
     Numeric(usize),
     HistoryPoints,
+    Recording,
     Node(usize, i32),
     Save,
     SavePresets,
@@ -826,7 +862,7 @@ pub fn run(
     win.size_range(980, 780, 0, 0);
     win.set_callback(move |_| tx.send(Action::Close));
     let mut settings_window = Window::default()
-        .with_size(780, 720)
+        .with_size(780, 820)
         .with_label("设置")
         .center_screen();
     settings_window.set_color(PAPER);
@@ -865,6 +901,16 @@ pub fn run(
     settings_root.fixed(&row, 40);
     let sampling_note = label("采样间隔应用于当前编辑配置；历史点数应用于全部历史图。");
     settings_root.fixed(&sampling_note, 30);
+    let mut recording_switch = check(
+        "后台历史记录（独立保存，重启保持）",
+        settings.history_recording_enabled,
+        Action::Recording,
+        tx,
+    );
+    settings_root.fixed(&recording_switch, 32);
+    let mut recording_status = label("历史记录：关闭");
+    recording_status.set_align(Align::Left | Align::Inside | Align::Wrap);
+    settings_root.fixed(&recording_status, 60);
     let heading = section("窗口与外观");
     settings_root.fixed(&heading, 28);
     let row = Flex::default().row();
@@ -924,9 +970,11 @@ pub fn run(
     settings_root.end();
     settings_window.end();
     settings_window.resizable(&settings_root);
-    settings_window.size_range(780, 720, 0, 0);
+    settings_window.size_range(780, 820, 0, 0);
     settings_window.make_modal(true);
     settings_window.set_callback(|w| w.hide());
+    #[cfg(test)]
+    acceptance::register(win.clone(), settings_window.clone());
     let mut fields = Fields {
         interval,
         history_points,
@@ -989,6 +1037,22 @@ pub fn run(
         }
     };
     let (saved_tx, saved_rx) = mpsc::channel::<(Settings, Result<(), String>)>();
+    let (record_saved_tx, record_saved_rx) = mpsc::channel::<(bool, Result<(), String>)>();
+    let mut committed = CommittedSettings::new(&settings, load_error.is_none());
+    let mut record_saving = false;
+    let mut pending_recording = None;
+    let mut pending_save = None;
+    let mut recorder = Recorder::new(&path, demo);
+    let mut start_recording_requested = false;
+    if settings.history_recording_enabled {
+        match recorder.start() {
+            Ok(producer) => {
+                let _ = worker.tx.send(Command::Recording(Some(producer)));
+            }
+            Err(e) => notice.set_label(&format!("历史记录启动失败：{e}")),
+        }
+    }
+    let mut last_recording_status = None;
     let mut saving = false;
     let mut save_draft = true;
     let mut save_selection: Option<Option<String>> = None;
@@ -1005,6 +1069,92 @@ pub fn run(
         let tick_started = Instant::now();
         app::wait_for(0.05).ok();
         refresh_system_appearance();
+        if start_recording_requested && recorder.ready() {
+            start_recording_requested = false;
+            match recorder.start() {
+                Ok(producer) => {
+                    let _ = worker.tx.send(Command::Recording(Some(producer)));
+                }
+                Err(e) => notice.set_label(&format!("历史记录无法启动：{e}")),
+            }
+        }
+        let status = recorder.status();
+        if last_recording_status.as_ref() != Some(&status) {
+            let state = match status.state {
+                "starting" => "启动中",
+                "recording" => "记录中",
+                "degraded" => "记录中（有丢失）",
+                "stopping" => "收尾中",
+                "error" => "错误",
+                _ => "关闭",
+            };
+            recording_status.set_label(&format!(
+                "历史记录：{state} · 丢失 {} 条\n{}{}",
+                status.dropped,
+                status.directory.display(),
+                if status.error.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{}", status.error)
+                }
+            ));
+            if status.state == "error" {
+                notice.set_label(&format!(
+                    "历史记录已停止：{}；风扇控制继续运行。",
+                    status.error
+                ));
+            }
+            last_recording_status = Some(status);
+        }
+        if let Ok((enabled, result)) = record_saved_rx.try_recv() {
+            record_saving = false;
+            match result {
+                Ok(()) => {
+                    committed.recording_saved(enabled);
+                    settings.history_recording_enabled = enabled;
+                    recording_switch.set_value(pending_recording.unwrap_or(enabled));
+                    if enabled && pending_recording != Some(false) {
+                        match recorder.start() {
+                            Ok(producer) => {
+                                let _ = worker.tx.send(Command::Recording(Some(producer)));
+                                notice.set_label("历史记录已开启并保存；曲线草稿未提交。");
+                            }
+                            Err(e) => {
+                                start_recording_requested = !recorder.ready();
+                                notice.set_label(&format!("记录偏好已保存，当前无法启动：{e}"))
+                            }
+                        }
+                    } else {
+                        notice.set_label("历史记录已关闭并保存；曲线草稿未提交。");
+                    }
+                }
+                Err(e) => {
+                    recording_switch.set_value(false);
+                    notice.set_label(&format!(
+                        "{}：{e}",
+                        if enabled {
+                            "历史记录未开启，偏好保存失败"
+                        } else {
+                            "本次记录已停止，但偏好保存失败，下次启动仍可能开启"
+                        }
+                    ));
+                }
+            }
+        }
+        if !saving
+            && !record_saving
+            && let Some(enabled) = pending_recording.take()
+        {
+            recording_switch.set_value(enabled);
+            tx.send(Action::Recording);
+        }
+        if !saving
+            && !record_saving
+            && pending_recording.is_none()
+            && let Some(action) = pending_save.take()
+        {
+            tx.send(action);
+        }
         while let Ok(e) = nrx.try_recv() {
             match e {
                 NativeEvent::Show => {
@@ -1112,6 +1262,7 @@ pub fn run(
             match result {
                 Ok(()) => {
                     settings = s;
+                    committed.full_save(&settings);
                     if save_draft {
                         editor.borrow_mut().dirty = false;
                     }
@@ -1162,6 +1313,34 @@ pub fn run(
                 continue;
             }
             match action {
+                Action::Recording => {
+                    let enabled = recording_switch.value();
+                    if !enabled {
+                        start_recording_requested = false;
+                        recorder.stop();
+                        let _ = worker.tx.send(Command::Recording(None));
+                    }
+                    if saving || record_saving {
+                        pending_recording = Some(enabled);
+                        continue;
+                    }
+                    match committed.recording_candidate(enabled) {
+                        Ok(candidate) => {
+                            record_saving = true;
+                            notice.set_label("正在保存历史记录偏好；曲线草稿保持不变…");
+                            let p = path.clone();
+                            let sender = record_saved_tx.clone();
+                            std::thread::spawn(move || {
+                                let result = candidate.save(&p);
+                                let _ = sender.send((enabled, result));
+                            });
+                        }
+                        Err(e) => {
+                            recording_switch.set_value(false);
+                            notice.set_label(&e);
+                        }
+                    }
+                }
                 Action::Settings => {
                     settings_window.set_label(&format!(
                         "设置 · {}",
@@ -1299,7 +1478,9 @@ pub fn run(
                     let _ = worker.tx.send(Command::AutoSwitch(settings.auto_switch));
                 }
                 Action::Save | Action::SavePresets => {
-                    if saving {
+                    if saving || record_saving || pending_recording.is_some() {
+                        pending_save = Some(action);
+                        notice.set_label("当前保存完成后将继续保存并应用。");
                         continue;
                     }
                     save_draft = matches!(action, Action::Save);
@@ -1375,6 +1556,17 @@ pub fn run(
                     }
                     match Settings::load(&path) {
                         Ok(s) => {
+                            if saving || record_saving {
+                                notice.set_label("请等待保存完成后重新加载。");
+                                continue;
+                            }
+                            committed.full_save(&s);
+                            recording_switch.set_value(s.history_recording_enabled);
+                            if s.history_recording_enabled != settings.history_recording_enabled {
+                                recorder.stop();
+                                let _ = worker.tx.send(Command::Recording(None));
+                                start_recording_requested = s.history_recording_enabled;
+                            }
                             settings = s;
                             {
                                 let mut e = editor.borrow_mut();
@@ -1453,14 +1645,11 @@ pub fn run(
                     let _ = worker.tx.send(Command::Select(target));
                 }
                 Action::Import => {
-                    let mut chooser =
-                        dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
-                    chooser.set_filter("JSON\t*.json");
-                    chooser.show();
-                    let file = chooser.filename();
+                    let file = legacy_import_path();
                     if file.is_file() {
                         match config::import_legacy(&file) {
                             Ok(mut s) => {
+                                s.history_recording_enabled = settings.history_recording_enabled;
                                 s.compatibility = settings.compatibility.clone();
                                 s.start_to_tray = settings.start_to_tray;
                                 settings = s;
@@ -1542,7 +1731,11 @@ pub fn run(
                 Action::Close if fields.close.value() && tray.is_some() => win.hide(),
                 Action::Close | Action::Exit => {
                     settings_window.hide();
-                    if saving {
+                    if saving
+                        || record_saving
+                        || pending_save.is_some()
+                        || pending_recording.is_some()
+                    {
                         notice.set_label("请等待保存完成再退出。");
                         continue;
                     }
@@ -1602,6 +1795,9 @@ pub fn run(
         std::thread::sleep(Duration::from_millis(50).saturating_sub(tick_started.elapsed()));
     }
     worker.join();
+    if !recorder.finish(Duration::from_secs(2)) {
+        eprintln!("History finalization timed out; buffered tail may be incomplete");
+    }
     drop(tray);
     settings_window.hide();
     win.hide();

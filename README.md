@@ -28,6 +28,7 @@ Start development with the [development guide](CONTRIBUTING.md). See the [archit
 - **Control policies**: stepped or linear curves, cooling hysteresis, and smooth duty changes; software takeover and return to firmware automatic control. ~~The third fan uses the GPU target~~.
 - **One-shot forced cooling**: runs at 95% duty until temperature drops below the configured threshold; takes priority over normal curves and is not saved as a persistent toggle.
 - **Real-time monitoring**: temperature, RPM, actual and target duty. CPU/GPU history advances by sample, supports 10–300 points, and defaults to 60. Missing samples leave gaps; a dashed line reconnects after recovery.
+- **Optional background history**: independently saved recording switch, CSV telemetry and JSONL control events; continues in the tray without additional hardware or GPU workload queries. See [GUI history recording](#gui-history-recording).
 - **Adjustable sampling**: 200–10000 ms, default 2000 ms; the actual period depends on hardware call duration.
 - **Presets and automatic switching**: up to 32 presets, manual application, ordering, and running-process matching. Rules support `*` / `?` wildcards; the first match in priority order wins, falling back to global configuration when none match. Automatic switching does not overwrite the editing draft.
 - **Desktop integration and appearance**: tray show/hide/exit, close to tray, Task Scheduler login startup; light, dark, or system theme; system or installed fonts and 8–16pt sizing.
@@ -76,6 +77,8 @@ The main window's editing draft is independent of the active configuration. Save
 
 Configuration is stored beside the executable as `ClevoFanControl.x64.json`, using `schemaVersion: 1`. Global settings and presets share one file. The size limit is 64 KiB; unknown fields, duplicate fields, incorrect types, and out-of-range data are rejected.
 
+When moving to a build in another directory, copy your existing configuration beside the new executable before launching it, keeping the original as a backup. A directory without this file starts with defaults; configurations are not shared automatically between build directories.
+
 Import Legacy Configuration accepts the old `ClevoFanControl.json` and reads `ClevoFanControl.presets.json` from the same directory if present. Import preserves the original files and only updates the draft. The imported configuration has takeover, auto-start, and automatic matching disabled; the old forced cooling toggle is not restored. Changes take effect only after saving.
 
 ## How It Works
@@ -122,6 +125,27 @@ cargo run -- --hardware-check       # Write 40%, wait 2 seconds, read back, then
 ```
 
 Debug uses `asInvoker`; Release uses `requireAdministrator`. Real hardware diagnostics may require an administrator terminal. Release is recommended for routine GUI use because it has no console window; Debug keeps the console for diagnostics. `--hardware-check` changes fan duty and is not a routine test command. `--smoke` writes a screenshot to the system temporary directory; earlier records included an exit timeout, so it does not establish acceptance for all GUI scenarios. Normal execution does not generate error logs or screenshots.
+
+### GUI History Recording
+
+In Settings, enable **Background history recording**. New configurations and older files without `historyRecordingEnabled` default to disabled. Enabling saves that preference before starting, independently of Save and Apply. The setting survives restart; each enable or subsequent launch starts a new session. Toggling recording does not submit curve drafts, save other pending settings, change takeover, or register auto-start. Disabling immediately stops accepting observations and then saves the preference. If saving fails, the current session remains off and the GUI warns that the saved preference might enable recording next launch. Enabling fails without starting if the preference cannot be saved. An invalid original configuration must be explicitly repaired before recording preferences can be saved.
+
+Files are local to `history/` beside the executable; `--demo` uses `history-demo/` and marks data simulated. The recording status in Settings shows the directory, actual state, lost-record count and errors, independently of the saved switch. Recording continues when the window is hidden and when firmware controls the fans. Live chart point limits do not limit file history. Output/open/flush/rotation/cleanup failures stop recording and show an error while fan control continues. After fixing an error, switch off and on to retry. If an old writer is still stopping, the requested new session waits for its completion; it never creates additional stuck writers.
+
+- Paired `cfc-history-v1-<UTC-date>-<session>-<segment>.csv` and `.events.jsonl` segments rotate at UTC midnight or before exceeding 8 MiB combined. Names are unique and previous sessions are never overwritten.
+- Keep the current UTC date plus the preceding six dates and at most **128 MiB per history directory**. Oldest closed managed segments are automatically deleted to keep recording. Copy evidence you want to retain elsewhere. Cleanup is nonrecursive, rejects managed reparse points, and preserves unrelated files and configurations. Once recording is off and accepted data has finished finalizing, no retention cleanup runs.
+- The writer uses a **256-record bounded queue**, discards newest records on saturation, and exposes a cumulative loss count. A full effective-state checkpoint starts every segment and follows state changes or loss recovery, so retained segments remain interpretable. A loss can include a control event, not just a temperature sample.
+- Buffers flush on a one-second schedule when storage responds, at rotation and at finalization. There is no per-sample durable disk sync. Forced termination can leave a buffered tail, incomplete CSV/JSON record or missing session-end event. An operation with a start event and no result remains unknown. Normal exit attempts fan restoration first and waits at most two seconds for recorder finalization; a hung driver is outside that timeout.
+
+CSV format version 1 fields are `format_version`, `session_id`, `sequence`, `sample_unix_ms`, `elapsed_ms`, `channel` (1-based), `temperature_c`, `rpm`, `actual_duty_percent`, `curve_duty_percent`, `requested_duty_percent`, `reading_status`, `mode`, `active_preset`, and `simulated`. Times use Unix milliseconds and monotonic session milliseconds. Empty measurements mean unavailable; measured zero remains zero. Quoted CSV fields can contain commas, quotes or newlines; use a CSV parser rather than splitting lines.
+
+`curve_duty_percent` is the evaluated demand for an accepted sample. `requested_duty_percent` is the last successfully issued software request at acquisition, empty when unavailable or firmware-controlled. Subsequent `write_start` / `write_result` JSONL events contain new requested duties and correlate through `observation` to that sample. The readings are not a readback of that subsequent request. A temperature jump preserves the first read as `verification_required`; the existing retry references it through `verification_of`. This adds no hardware reads. Failed samples are events without fabricated channel rows.
+
+JSONL records include `format_version`, `session_id`, `sequence`, `observation`, `unix_ms`, `elapsed_ms`, `kind`, and `detail`; checkpoint records carry full effective control settings, mode, preset, hardware description, application version and cumulative drops. Events cover state changes, sampling failures, write/restore start and actual results, suspend/resume, and session end. No samples are synthesized across sleep. Sequence gaps and drop counters help distinguish loss from gaps in sampling. CSV and JSONL writes are not a cross-file transaction: after interruption, consume complete records and tolerate a missing counterpart.
+
+History contains local preset names, effective fan curves and hardware description. It does not include process lists, workload utilization/power, or unsaved drafts, and does not launch `nvidia-smi`. Existing CLI outputs remain separate; CLI candidates explicitly disable the GUI recorder. Older binaries with strict JSON parsing can reject `historyRecordingEnabled`: exit normally and restore a configuration backup or remove that field before downgrading. Removing it defaults recording off and does not delete history.
+
+See the [GUI history validation record](docs/GUI_HISTORY_VALIDATION.md) for simulated acceptance, performance measurements and outstanding hardware scenarios.
 
 ### CLI Sampling and Ordinary-Workload Tuning
 

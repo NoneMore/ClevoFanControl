@@ -262,6 +262,7 @@ fn candidate(options: &Options, settings: &Settings, tuner: &Tuner) -> Result<()
     candidate.global.take_over = false;
     candidate.auto_run = false;
     candidate.auto_switch = false;
+    candidate.history_recording_enabled = false;
     candidate.start_to_tray = false;
     candidate.save(&options.out.join("candidate.json"))
 }

@@ -2,7 +2,9 @@ use crate::{
     config::{Settings, wildcard},
     control::{ChannelState, StableResponse, cool_complete, ramp},
     hardware::{Hardware, Sample},
+    recording::{Context as RecordingContext, Producer},
 };
+use serde_json::json;
 use std::{
     sync::mpsc::{self, Receiver, Sender},
     thread,
@@ -43,6 +45,7 @@ pub enum Command {
     Suspend,
     Resume,
     Retry,
+    Recording(Option<Producer>),
     Exit,
 }
 pub enum Event {
@@ -118,7 +121,11 @@ fn run(
     let mut next_scan = Instant::now();
     let mut next_restore = Instant::now();
     let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut recording: Option<Producer> = None;
     loop {
+        if recording.as_ref().is_some_and(|r| !r.active()) {
+            recording = None;
+        }
         let cmd = match pending
             .take()
             .map_or_else(|| rx.recv_timeout(Duration::from_millis(100)), Ok)
@@ -132,11 +139,20 @@ fn run(
         if let Some(cmd) = cmd {
             match cmd {
                 Command::Exit => {
+                    if let Some(r) = &recording {
+                        r.event("restore_start", json!({"reason":"exit","applicable":owned}));
+                    }
                     let result = if owned {
                         hardware.as_mut().map_or(Ok(()), |h| h.automatic())
                     } else {
                         Ok(())
                     };
+                    if let Some(r) = &recording {
+                        r.event(
+                            "restore_result",
+                            json!({"reason":"exit","applicable":owned,"result":result}),
+                        );
+                    }
                     let _ = tx.send(Event::Stopped(result));
                     return;
                 }
@@ -169,16 +185,32 @@ fn run(
                     next_scan = Instant::now();
                 }
                 Command::Suspend => {
+                    if let Some(r) = &recording {
+                        r.event("suspend", json!({"owned":owned}));
+                    }
                     suspended = true;
                     sample = None;
                     if owned {
-                        match hardware.as_mut().unwrap().automatic() {
+                        if let Some(r) = &recording {
+                            r.event("restore_start", json!({"reason":"suspend"}));
+                        }
+                        let result = hardware.as_mut().unwrap().automatic();
+                        if let Some(r) = &recording {
+                            r.event(
+                                "restore_result",
+                                json!({"reason":"suspend","result":result}),
+                            );
+                        }
+                        match result {
                             Ok(()) => owned = false,
                             Err(e) => error = Some(e),
                         }
                     }
                 }
                 Command::Resume => {
+                    if let Some(r) = &recording {
+                        r.event("resume", json!({}));
+                    }
                     suspended = false;
                     changed = true;
                     sample = None;
@@ -195,6 +227,9 @@ fn run(
                             Err(e) => error = Some(e),
                         }
                     }
+                }
+                Command::Recording(producer) => {
+                    recording = producer;
                 }
             }
         }
@@ -234,9 +269,39 @@ fn run(
             output.clear();
             last_written.clear();
         }
+        if let Some(r) = recording.as_mut().filter(|r| r.active()) {
+            r.context(RecordingContext {
+                control: cfg.clone(),
+                active_preset: active.clone(),
+                mode: if suspended {
+                    "suspended"
+                } else if fault || hardware.is_none() {
+                    "fault"
+                } else if force {
+                    "forced"
+                } else if cfg.take_over && responses.iter().any(StableResponse::boosted) {
+                    "protection"
+                } else if cfg.take_over {
+                    "software"
+                } else {
+                    "firmware"
+                }
+                .into(),
+                hardware: hardware
+                    .as_ref()
+                    .map(|h| h.description())
+                    .unwrap_or_default(),
+                simulated: demo,
+                curve_duties: targets.clone(),
+                requests: if owned { last_written.clone() } else { vec![] },
+            });
+        }
         if !suspended && hardware.is_none() && Instant::now() >= next_sample {
             next_sample = Instant::now() + Duration::from_secs_f64(cfg.update_interval);
             let _ = tx.send(Event::Sample(None));
+            if let Some(r) = recording.as_mut() {
+                r.sample_error(error.as_deref().unwrap_or("hardware unavailable"));
+            }
         }
         if !suspended && let Some(h) = hardware.as_mut() {
             if Instant::now() >= next_sample {
@@ -251,6 +316,9 @@ fn run(
                                 .any(|(a, b)| (a.temperature - b.temperature).abs() > 30)
                         });
                         let result = if jump {
+                            if let Some(r) = recording.as_mut() {
+                                r.sample(&s, "verification_required");
+                            }
                             thread::sleep(Duration::from_secs(1));
                             h.sample()
                         } else {
@@ -297,6 +365,31 @@ fn run(
                                 if s.channels.len() == 3 {
                                     targets.push(targets[1]);
                                 }
+                                if let Some(r) = recording.as_mut() {
+                                    r.context(RecordingContext {
+                                        control: cfg.clone(),
+                                        active_preset: active.clone(),
+                                        mode: if fault {
+                                            "fault"
+                                        } else if force {
+                                            "forced"
+                                        } else if cfg.take_over
+                                            && responses.iter().any(StableResponse::boosted)
+                                        {
+                                            "protection"
+                                        } else if cfg.take_over {
+                                            "software"
+                                        } else {
+                                            "firmware"
+                                        }
+                                        .into(),
+                                        hardware: h.description(),
+                                        simulated: demo,
+                                        curve_duties: targets.clone(),
+                                        requests: if owned { last_written.clone() } else { vec![] },
+                                    });
+                                    r.sample(&s, "accepted");
+                                }
                                 if output.len() != targets.len() {
                                     output = s.channels.iter().map(|c| c.duty).collect();
                                 }
@@ -310,6 +403,9 @@ fn run(
                                 }
                             }
                             Err(e) => {
+                                if let Some(r) = recording.as_mut() {
+                                    r.sample_error(&e);
+                                }
                                 error = Some(e);
                                 sample = None;
                                 fault = true;
@@ -317,6 +413,9 @@ fn run(
                         }
                     }
                     Err(e) => {
+                        if let Some(r) = recording.as_mut() {
+                            r.sample_error(&e);
+                        }
                         error = Some(e);
                         sample = None;
                         fault = true;
@@ -337,7 +436,17 @@ fn run(
                 && Instant::now() >= next_restore
             {
                 next_restore = Instant::now() + Duration::from_secs(2);
-                match h.automatic() {
+                if let Some(r) = &recording {
+                    r.event("restore_start", json!({"reason":"fault_stale_or_cancel"}));
+                }
+                let result = h.automatic();
+                if let Some(r) = &recording {
+                    r.event(
+                        "restore_result",
+                        json!({"reason":"fault_stale_or_cancel","result":result}),
+                    );
+                }
+                match result {
                     Ok(()) => {
                         owned = false;
                         last_written.clear()
@@ -370,12 +479,35 @@ fn run(
                 }
                 if output != last_written {
                     owned = true;
-                    match h.write(&output) {
+                    if let Some(r) = &recording {
+                        r.event(
+                            "write_start",
+                            json!({"requested_duties":output,"curve_duties":targets}),
+                        );
+                    }
+                    let result = h.write(&output);
+                    if let Some(r) = &recording {
+                        r.event(
+                            "write_result",
+                            json!({"requested_duties":output,"result":result}),
+                        );
+                    }
+                    match result {
                         Ok(()) => last_written = output.clone(),
                         Err(e) => {
                             error = Some(e);
                             fault = true;
-                            if let Err(e) = h.automatic() {
+                            if let Some(r) = &recording {
+                                r.event("restore_start", json!({"reason":"write_failure"}));
+                            }
+                            let result = h.automatic();
+                            if let Some(r) = &recording {
+                                r.event(
+                                    "restore_result",
+                                    json!({"reason":"write_failure","result":result}),
+                                );
+                            }
+                            if let Err(e) = result {
                                 error =
                                     Some(format!("{}；{e}", error.as_deref().unwrap_or_default()))
                             } else {
@@ -431,11 +563,14 @@ mod tests {
         temps: Vec<i32>,
         duties: Vec<i32>,
         fail: bool,
+        samples: usize,
+        restore_failure: bool,
     }
     struct Mock(Arc<Mutex<State>>);
     impl Hardware for Mock {
         fn sample(&mut self) -> Result<Sample, String> {
-            let s = self.0.lock().unwrap();
+            let mut s = self.0.lock().unwrap();
+            s.samples += 1;
             if s.fail {
                 return Err("sample unavailable".into());
             }
@@ -460,8 +595,13 @@ mod tests {
             Ok(())
         }
         fn automatic(&mut self) -> Result<(), String> {
-            self.0.lock().unwrap().restores += 1;
-            Ok(())
+            let mut state = self.0.lock().unwrap();
+            state.restores += 1;
+            if state.restore_failure {
+                Err("restore unavailable".into())
+            } else {
+                Ok(())
+            }
         }
         fn description(&self) -> String {
             "test".into()
@@ -682,5 +822,191 @@ mod tests {
         );
         assert!(state.lock().unwrap().writes.is_empty());
         stop(tx, erx, j);
+    }
+
+    #[test]
+    fn history_preserves_acquisition_before_a_blocked_write_and_exit_result() {
+        struct BlockingWrite {
+            inner: Mock,
+            ready: Sender<()>,
+            release: Receiver<()>,
+        }
+        impl Hardware for BlockingWrite {
+            fn sample(&mut self) -> Result<Sample, String> {
+                self.inner.sample()
+            }
+            fn write(&mut self, d: &[i32]) -> Result<(), String> {
+                self.ready.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(4)).unwrap();
+                self.inner.write(d)
+            }
+            fn automatic(&mut self) -> Result<(), String> {
+                self.inner.automatic()
+            }
+            fn description(&self) -> String {
+                "blocking write simulation".into()
+            }
+        }
+        let directory =
+            std::env::temp_dir().join(format!("clevo-worker-history-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut recorder = crate::recording::Recorder::new(&directory.join("app.exe"), true);
+        let producer = recorder.start().unwrap();
+        let state = Arc::new(Mutex::new(State {
+            temps: vec![50, 60],
+            duties: vec![30; 2],
+            ..State::default()
+        }));
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let hardware = BlockingWrite {
+            inner: Mock(state.clone()),
+            ready: ready_tx,
+            release: release_rx,
+        };
+        let (tx, rx) = mpsc::channel();
+        let (etx, erx) = mpsc::channel();
+        let mut settings = Settings::default();
+        settings.global.take_over = true;
+        settings.global.update_interval = 10.0;
+        tx.send(Command::Recording(Some(producer))).unwrap();
+        let j = thread::spawn(move || run(settings, Ok(Box::new(hardware)), rx, etx));
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let read_events = || {
+            std::fs::read_dir(directory.join("history-demo"))
+                .unwrap()
+                .filter_map(|e| {
+                    let p = e.ok()?.path();
+                    p.to_string_lossy()
+                        .ends_with(".events.jsonl")
+                        .then(|| std::fs::read_to_string(p).unwrap_or_default())
+                })
+                .collect::<String>()
+        };
+        let mut text = read_events();
+        while !text.contains("\"kind\":\"sample\"") && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+            text = read_events();
+        }
+        assert!(text.contains("\"kind\":\"sample\""));
+        assert!(text.contains("\"kind\":\"write_start\""));
+        assert!(!text.contains("\"kind\":\"write_result\""));
+        tx.send(Command::Exit).unwrap();
+        release_tx.send(()).unwrap();
+        until(&erx, |e| matches!(e, Event::Stopped(Ok(()))));
+        j.join().unwrap();
+        assert!(recorder.finish(Duration::from_secs(2)));
+        let text = read_events();
+        assert!(text.contains("\"kind\":\"restore_result\""));
+        assert!(text.contains("\"Ok\":null"));
+        let s = state.lock().unwrap();
+        assert_eq!(s.samples, 1);
+        assert_eq!(s.writes.len(), 1);
+        assert_eq!(s.restores, 1);
+        drop(s);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn history_toggle_does_not_resample_and_verification_keeps_both_readings() {
+        let directory =
+            std::env::temp_dir().join(format!("clevo-worker-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut recorder = crate::recording::Recorder::new(&directory.join("app.exe"), true);
+        let (state, tx, rx, j) = start(Settings::default(), vec![50, 50]);
+        until(&rx, |e| matches!(e, Event::Sample(Some(_))));
+        let count = state.lock().unwrap().samples;
+        tx.send(Command::Recording(Some(recorder.start().unwrap())))
+            .unwrap();
+        until(&rx, |e| matches!(e, Event::Snapshot(_)));
+        assert_eq!(state.lock().unwrap().samples, count);
+        state.lock().unwrap().temps = vec![90, 90];
+        until(
+            &rx,
+            |e| matches!(e,Event::Sample(Some(s)) if s.channels[0].temperature==90),
+        );
+        stop(tx, rx, j);
+        assert!(recorder.finish(Duration::from_secs(2)));
+        let text = std::fs::read_dir(directory.join("history-demo"))
+            .unwrap()
+            .filter_map(|e| {
+                let p = e.ok()?.path();
+                p.to_string_lossy()
+                    .ends_with(".events.jsonl")
+                    .then(|| std::fs::read_to_string(p).unwrap())
+            })
+            .collect::<String>();
+        assert!(text.contains("verification_required"));
+        let events: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert!(
+            events
+                .iter()
+                .any(|e| e["detail"]["verification_of"].is_u64())
+        );
+        assert_eq!(state.lock().unwrap().samples, count + 2);
+        assert!(state.lock().unwrap().writes.is_empty());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn history_records_protection_fault_suspend_resume_and_failed_restoration() {
+        let directory =
+            std::env::temp_dir().join(format!("clevo-worker-events-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut recorder = crate::recording::Recorder::new(&directory.join("app.exe"), true);
+        let mut settings = Settings::default();
+        settings.global.take_over = true;
+        settings.global.stable_response = true;
+        let (state, tx, rx, j) = start(settings, vec![81, 50]);
+        tx.send(Command::Recording(Some(recorder.start().unwrap())))
+            .unwrap();
+        until(
+            &rx,
+            |e| matches!(e,Event::Snapshot(s) if s.mode.starts_with("高温保护")),
+        );
+        tx.send(Command::Suspend).unwrap();
+        until(
+            &rx,
+            |e| matches!(e,Event::Snapshot(s) if s.mode=="休眠暂停"),
+        );
+        tx.send(Command::Resume).unwrap();
+        until(
+            &rx,
+            |e| matches!(e,Event::Snapshot(s) if s.mode.starts_with("高温保护")),
+        );
+        {
+            let mut s = state.lock().unwrap();
+            s.fail = true;
+            s.restore_failure = true;
+        }
+        until(&rx, |e| matches!(e,Event::Snapshot(s) if s.mode=="不可用"));
+        tx.send(Command::Exit).unwrap();
+        until(&rx, |e| matches!(e, Event::Stopped(Err(_))));
+        j.join().unwrap();
+        assert!(recorder.finish(Duration::from_secs(2)));
+        let text = std::fs::read_dir(directory.join("history-demo"))
+            .unwrap()
+            .filter_map(|e| {
+                let p = e.ok()?.path();
+                p.to_string_lossy()
+                    .ends_with(".events.jsonl")
+                    .then(|| std::fs::read_to_string(p).unwrap())
+            })
+            .collect::<String>();
+        for expected in [
+            "suspend",
+            "resume",
+            "protection",
+            "sample_error",
+            "restore unavailable",
+            "restore_result",
+        ] {
+            assert!(text.contains(expected), "missing {expected}");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -24,6 +24,8 @@ TraceRelease/
 
 # Rust build and local configuration
 /target/
+/history/
+/history-demo/
 /ClevoFanControl.x64.json
 /ClevoFanControl.json
 /ClevoFanControl.presets.json

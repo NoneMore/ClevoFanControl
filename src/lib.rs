@@ -3,5 +3,7 @@ pub mod control;
 pub mod hardware;
 pub mod load;
 pub mod platform;
+pub mod preferences;
+pub mod recording;
 pub mod tuning;
 pub mod worker;

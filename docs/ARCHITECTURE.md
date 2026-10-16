@@ -41,6 +41,8 @@ flowchart TD
 | `src/cli.rs` | Arguments, session files, stop requests, restoration guard, and monitoring/tuning loops |
 | `src/tuning.rs` | Tuning seeds, local curve adjustments, sample and temperature checks, and statistics |
 | `src/load.rs` | CPU utilization and NVIDIA GPU queries; load recording separate from EC control |
+| `src/recording.rs` | Optional GUI history, nonblocking bounded producer, writer status, versioned files, rotation and retention |
+| `src/preferences.rs` | Last committed settings snapshot used by recording-only preference transactions |
 | `build.rs`, `app.manifest` | Windows icon and manifest; Debug uses caller privileges, Release requests administrator privileges |
 
 ## State Boundaries
@@ -48,6 +50,10 @@ flowchart TD
 The GUI editing draft is separate from the worker's active configuration. Save and Apply submits edits; toggling takeover and automatic preset matching must not implicitly submit the draft. When changing configuration flow, inspect both action handling in `ui.rs` and `Command` branches in `worker.rs`.
 
 The worker owns the hardware object, receives `Command`, and returns state through `Event` and `Snapshot`. Snapshots separately preserve curve demand, actual request, and sampled readback values; these can differ during stable response or high-temperature protection. The UI displays events; the control thread handles scheduling and hardware interaction.
+
+GUI history uses a separate `Command::Recording` sink. Acquisition is enqueued before subsequent hardware calls; start/result events preserve the associated observation sequence. Verification-triggering samples are retained without adding reads. All storage and retention run in one writer thread; a full queue drops diagnostic records instead of delaying control. Complete state checkpoints at segment boundaries and after loss/context changes keep retained files interpretable. Recording status is independent of the worker's hardware fault latch. Normal exit restores first, then allows at most two seconds for writer finalization.
+
+Recording-only saves use the last committed configuration, not the mutable GUI settings or curve draft. They share the existing single-save gate with full saves and update only the recording preference on completion. Full saves update the committed snapshot; valid reloads synchronize it, and GUI legacy imports preserve the independent recording preference. Recording-only saves never send `Command::Settings`, clear unrelated dirty state or register auto-start. Disabling stops current recording even if preference persistence fails; the UI warns about the next-launch saved value.
 
 The CLI does not use the GUI `Worker`. Its own session loop combines shared control algorithms, tuning, and hardware interfaces. Check both GUI and CLI when changing shared algorithms, and inspect both entry points separately when changing scheduling or restoration paths. The CLI outputs candidate configurations without directly overwriting user configuration.
 

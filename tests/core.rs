@@ -333,6 +333,7 @@ fn legacy_import_disarms_control_without_touching_original() {
     std::fs::write(&p, &original).unwrap();
     let s = import_legacy(&p).unwrap();
     assert!(!s.global.take_over && !s.auto_run && !s.auto_switch);
+    assert!(!s.history_recording_enabled);
     assert!(s.close_to_tray);
     assert_eq!(std::fs::read(&p).unwrap(), original);
     std::fs::remove_dir_all(dir).unwrap();
@@ -368,6 +369,40 @@ fn sampling_interval_and_history_count_accept_old_config_and_new_ranges() {
         s.history_points = points;
         assert!(s.validate().is_err());
     }
+}
+
+#[test]
+fn recording_preference_is_optional_boolean_and_strict() {
+    let settings = Settings::default();
+    let mut value = serde_json::to_value(&settings).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("historyRecordingEnabled");
+    assert!(
+        !serde_json::from_value::<Settings>(value.clone())
+            .unwrap()
+            .history_recording_enabled
+    );
+    for enabled in [true, false] {
+        value["historyRecordingEnabled"] = enabled.into();
+        assert_eq!(
+            serde_json::from_value::<Settings>(value.clone())
+                .unwrap()
+                .history_recording_enabled,
+            enabled
+        );
+    }
+    for invalid in [serde_json::Value::Null, 1.into(), "true".into()] {
+        value["historyRecordingEnabled"] = invalid;
+        assert!(serde_json::from_value::<Settings>(value.clone()).is_err());
+    }
+    let json = serde_json::to_string(&settings).unwrap();
+    let duplicate = json.replacen('{', "{\"historyRecordingEnabled\":true,", 1);
+    assert!(serde_json::from_str::<Settings>(&duplicate).is_err());
+    value["historyRecordingEnabled"] = false.into();
+    value["unrecognized"] = true.into();
+    assert!(serde_json::from_value::<Settings>(value).is_err());
 }
 
 #[test]

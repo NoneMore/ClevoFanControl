@@ -151,6 +151,8 @@ pub struct Settings {
     #[serde(default = "default_history_points")]
     pub history_points: usize,
     #[serde(default)]
+    pub history_recording_enabled: bool,
+    #[serde(default)]
     pub theme: Theme,
     /// None uses the current Windows message font; Some is an installed FLTK font name.
     #[serde(default)]
@@ -171,6 +173,7 @@ impl Default for Settings {
             global: ControlConfig::default(),
             font_size: 10,
             history_points: default_history_points(),
+            history_recording_enabled: false,
             theme: Theme::System,
             font_family: None,
             auto_run: false,
