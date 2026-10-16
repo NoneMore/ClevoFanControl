@@ -91,6 +91,8 @@ Safety boost recovery now requires 30 continuous seconds below the trigger minus
 
 Repeated snapshot rendering and tray updates were suppressed, and the GUI polling loop was bounded while hidden. Short on-machine checks measured about 3.0–3.4% total CPU usage before the change, 0.10% with the updated window shown and 0.00% rounded while hidden, over six-second measurement windows. Closing hid the application without terminating control, reopening succeeded, and the saved curve and tray settings were preserved. These short checks do not replace a long GUI soak test.
 
+A later GPU snapshot showed a 40% curve target but a 6% request, 4% actual duty and zero RPM. Stable control had inherited the low firmware duty and was increasing by only two points per 30 seconds. Restarting also demonstrated that firmware could temporarily return near-full duty. Takeover/resume now initializes the request from the curve, with raw-temperature protection taking precedence, before applying normal rate limits. Regression tests cover low/high starting duty, explicit fan-stop curves, third-fan following and resume. After restarting the corrected GUI, GPU telemetry showed 42°C, a 40% curve/request/actual duty and 2,239 RPM; the configuration was unchanged.
+
 ## Still to validate
 
 The core read/write/restore protocol is validated, but the following should still be tested before treating the machine as fully production-proven:

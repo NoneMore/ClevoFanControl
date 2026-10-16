@@ -525,6 +525,32 @@ mod tests {
         stop(tx, rx, j);
     }
     #[test]
+    fn stable_takeover_and_resume_do_not_ramp_from_firmware_stop_duty() {
+        let mut s = Settings::default();
+        s.global.stable_response = true;
+        let (state, tx, rx, j) = start(s, vec![55, 41, 41]);
+        until(&rx, |e| matches!(e, Event::Sample(Some(_))));
+        state.lock().unwrap().duties = vec![4; 3];
+        tx.send(Command::Takeover(true)).unwrap();
+        until(&rx, |_| !state.lock().unwrap().writes.is_empty());
+        let takeover = state.lock().unwrap().writes[0].clone();
+
+        tx.send(Command::Suspend).unwrap();
+        until(
+            &rx,
+            |e| matches!(e, Event::Snapshot(s) if s.mode == "休眠暂停"),
+        );
+        state.lock().unwrap().duties = vec![0; 3];
+        let count = state.lock().unwrap().writes.len();
+        tx.send(Command::Resume).unwrap();
+        until(&rx, |_| state.lock().unwrap().writes.len() > count);
+        let resumed = state.lock().unwrap().writes[count].clone();
+        stop(tx, rx, j);
+
+        assert_eq!(takeover, vec![40; 3]);
+        assert_eq!(resumed, vec![40; 3]);
+    }
+    #[test]
     fn stable_profile_bypasses_delay_when_raw_temperature_is_high() {
         let mut s = Settings::default();
         s.global.stable_response = true;

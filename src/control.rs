@@ -79,7 +79,14 @@ impl StableResponse {
             self.decrease_since = None;
             return normal.max(target).clamp(0, 100);
         }
-        let last = *self.last_change.get_or_insert(now);
+        if self.last_change.is_none() {
+            // Firmware can report stopped or near-full duty on takeover/resume.
+            // Establish the curve demand before applying normal rate limits;
+            // raw high-temperature protection above still takes precedence.
+            self.last_change = Some(now);
+            return target.clamp(0, 100);
+        }
+        let last = self.last_change.unwrap();
         let difference = target - current;
         if difference.abs() <= 2 {
             self.decrease_since = None;

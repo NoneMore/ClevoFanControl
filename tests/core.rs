@@ -129,6 +129,7 @@ fn stable_response_rejects_short_spikes_but_raw_heat_bypasses_delays() {
     use std::time::{Duration, Instant};
     let start = Instant::now();
     let mut response = StableResponse::default();
+    assert_eq!(response.duty(40, 40, 60, 0, start), 40);
     for seconds in 0..20 {
         assert_eq!(
             response.temperature(60, start + Duration::from_secs(seconds)),
@@ -151,6 +152,7 @@ fn stable_response_limits_changes_and_waits_before_decreasing() {
     use std::time::{Duration, Instant};
     let start = Instant::now();
     let mut response = StableResponse::default();
+    assert_eq!(response.duty(40, 40, 60, 0, start), 40);
     assert_eq!(response.duty(40, 60, 60, 0, start), 40);
     assert_eq!(
         response.duty(40, 60, 60, 0, start + Duration::from_secs(29)),
@@ -180,6 +182,29 @@ fn stable_response_limits_changes_and_waits_before_decreasing() {
         response.duty(41, 43, 60, 0, start + Duration::from_secs(200)),
         41
     );
+}
+
+#[test]
+fn stable_response_establishes_curve_demand_before_rate_limiting() {
+    use std::time::{Duration, Instant};
+    let now = Instant::now();
+    for initial in [0, 4, 6, 39, 60, 98, 100] {
+        let mut response = StableResponse::default();
+        assert_eq!(response.duty(initial, 40, 41, 1, now), 40);
+        assert_eq!(
+            response.duty(40, 50, 50, 1, now + Duration::from_secs(1)),
+            40
+        );
+        assert_eq!(
+            response.duty(40, 50, 50, 1, now + Duration::from_secs(30)),
+            42
+        );
+    }
+    let mut response = StableResponse::default();
+    assert_eq!(response.duty(4, 40, 75, 1, now), 100);
+    // An explicit fan-stop curve remains supported; there is no hard-coded floor.
+    let mut response = StableResponse::default();
+    assert_eq!(response.duty(0, 0, 35, 1, now), 0);
 }
 
 #[test]
