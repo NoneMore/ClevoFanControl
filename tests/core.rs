@@ -142,7 +142,11 @@ fn stable_response_rejects_short_spikes_but_raw_heat_bypasses_delays() {
     );
     assert_eq!(response.duty(40, 70, 78, 0, start), 40);
     assert_eq!(
-        response.duty(40, 40, 80, 0, start + Duration::from_secs(1)),
+        response.duty(40, 40, 94, 0, start + Duration::from_secs(1)),
+        40
+    );
+    assert_eq!(
+        response.duty(40, 40, 95, 0, start + Duration::from_secs(1)),
         100
     );
 }
@@ -201,7 +205,9 @@ fn stable_response_establishes_curve_demand_before_rate_limiting() {
         );
     }
     let mut response = StableResponse::default();
-    assert_eq!(response.duty(4, 40, 75, 1, now), 100);
+    assert_eq!(response.duty(4, 40, 75, 1, now), 40);
+    let mut response = StableResponse::default();
+    assert_eq!(response.duty(4, 40, 85, 1, now), 100);
     // An explicit fan-stop curve remains supported; there is no hard-coded floor.
     let mut response = StableResponse::default();
     assert_eq!(response.duty(0, 0, 35, 1, now), 0);
@@ -212,7 +218,7 @@ fn high_temperature_boost_recovers_without_a_long_normal_ramp() {
     use std::time::{Duration, Instant};
     let start = Instant::now();
     let mut response = StableResponse::default();
-    assert_eq!(response.duty(36, 36, 80, 0, start), 100);
+    assert_eq!(response.duty(36, 36, 95, 0, start), 100);
     assert!(response.boosted());
     assert_eq!(
         response.duty(100, 36, 61, 0, start + Duration::from_secs(1)),
@@ -234,13 +240,13 @@ fn safety_boost_requires_continuous_cooling_and_preserves_curve_demand() {
     use std::time::{Duration, Instant};
     let start = Instant::now();
     let mut response = StableResponse::default();
-    assert_eq!(response.duty(35, 40, 75, 1, start), 100);
+    assert_eq!(response.duty(35, 40, 85, 1, start), 100);
     assert_eq!(
         response.duty(100, 45, 60, 1, start + Duration::from_secs(1)),
         100
     );
     assert_eq!(
-        response.duty(100, 45, 72, 1, start + Duration::from_secs(20)),
+        response.duty(100, 45, 82, 1, start + Duration::from_secs(20)),
         100
     );
     assert_eq!(

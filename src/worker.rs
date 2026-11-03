@@ -695,7 +695,7 @@ mod tests {
         let mut s = Settings::default();
         s.global.stable_response = true;
         s.global.take_over = true;
-        let (state, tx, rx, j) = start(s, vec![81, 50]);
+        let (state, tx, rx, j) = start(s, vec![95, 50]);
         until(
             &rx,
             |e| matches!(e,Event::Snapshot(s) if s.mode.starts_with("高温保护")),
@@ -961,7 +961,7 @@ mod tests {
         let mut settings = Settings::default();
         settings.global.take_over = true;
         settings.global.stable_response = true;
-        let (state, tx, rx, j) = start(settings, vec![81, 50]);
+        let (state, tx, rx, j) = start(settings, vec![95, 50]);
         tx.send(Command::Recording(Some(recorder.start().unwrap())))
             .unwrap();
         until(

@@ -4,6 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Raw temperatures that engage full-speed protection (CPU, GPU).
+const GUARD: [i32; 2] = [95, 85];
+
 /// Shared by CLI tuning and the GUI when a tuned config enables stableResponse.
 #[derive(Default)]
 pub struct StableResponse {
@@ -54,7 +57,7 @@ impl StableResponse {
         now: Instant,
     ) -> i32 {
         // Raw temperatures bypass all filtering/delays near the high-temperature guard.
-        let guard = if channel == 0 { 80 } else { 75 };
+        let guard = GUARD[channel.min(1)];
         if raw >= guard {
             self.boost_normal_duty.get_or_insert(current);
             self.boost_recovery_since = None;

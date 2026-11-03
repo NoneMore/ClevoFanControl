@@ -61,7 +61,7 @@ Close the GUI first: all controllers share the same single-instance lock.
 Tune uses 25% CPU / 40% GPU seed duty floors, 85C CPU / 80C GPU session limits.
 CPU target has a +5C stability band; GPU target has a +2C band.
 15s median + 30s EMA, 2-point duty deadband, normal changes every 30s
-(up <=2 points, down <=1 point after 120s). Raw CPU>=80/GPU>=75C bypasses
+(up <=2 points, down <=1 point after 120s). Raw CPU>=95/GPU>=85C bypasses
 delays to 100%. Candidate enables the same stable response in the GUI.
 Baseline runs firmware automatic; adaptation starts after baseline, every 180s.
 Stop with Ctrl+C or the stop command. Exit restores firmware automatic.
