@@ -1,6 +1,5 @@
 # Local editor and worktree state
 .vs/
-.worktrees/
 *.user
 *.suo
 *.cache
@@ -24,6 +23,3 @@
 # Local release archives
 /ClevoFanControl-*.zip
 
-# Local tooling caches
-/.codegraph/
-/.hallmark/
