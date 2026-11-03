@@ -1,99 +1,41 @@
 # Development Guide
 
-This project targets Windows x64. See the [README](README.md) for usage, [architecture guide](docs/ARCHITECTURE.md) for entry points and module responsibilities, and [NH5xAx](docs/NH5XAX.md) for hardware validation records.
+The application targets Windows x64. See [README.md](README.md) for installation, features, and usage.
 
-## Environment Setup
+## Setup
 
-1. Install Git, PowerShell 7, Rust/rustup, and Visual Studio Build Tools with the MSVC C++ toolchain and Windows SDK.
-2. After cloning, run `rustup show` at the repository root and confirm the toolchain and target specified in `rust-toolchain.toml`.
-3. Initial Cargo commands need network access to download dependencies and the `fltk-bundled` precompiled library. Dependency versions are defined by `Cargo.lock`.
+Install Git, PowerShell 7, Rust/rustup, Visual Studio Build Tools (MSVC C++), and the Windows SDK. Run `rustup show` at the repository root to confirm the pinned toolchain in `rust-toolchain.toml`. Initial builds download dependencies and the bundled FLTK library.
 
-Building, automated tests, and demo mode do not require vendor DLLs or drivers. Real hardware access requires the corresponding official components; see the README compatibility and usage sections.
-
-## Routine Checks
+## Checks
 
 Run from the repository root:
 
 ```powershell
-# Formatting, Clippy with warnings treated as errors, unit and integration tests
 pwsh -NoProfile -File .\scripts\check.ps1
-
-# Run the checks above, then build Windows x64 Release for CI and releases
 pwsh -NoProfile -File .\scripts\check.ps1 -Release
 ```
 
-The script switches to the repository root and restores the caller's working directory on completion. It stops immediately and reports failure if any step fails. CI and release workflows use the same script; maintain shared checks there.
+The script checks formatting, Clippy warnings, and tests; `-Release` also compiles the Windows x64 Release executables. To run a single test target, use `cargo test --locked --test core` or another target listed under `tests/`.
 
-If a program under `target/debug/` is running, Windows may prevent Cargo from replacing its executable. Exit the program normally before checking, or use a separate build directory in a separate PowerShell session:
+Exit running debug executables before rebuilding, or isolate the output directory:
 
 ```powershell
 $env:CARGO_TARGET_DIR = Join-Path $PWD 'target/dev-check'
 pwsh -NoProfile -File .\scripts\check.ps1 -Release
 ```
 
-This setting affects only the current session and its child processes. Exiting that session restores the default build directory. A separate directory requires recompiling dependencies on first use and stores its outputs there.
-
-For individual iterations, you can run:
+## Manual verification
 
 ```powershell
-cargo fmt
-cargo test --locked --test core
-cargo test --locked --test nh5xax
-cargo test --locked --lib worker::tests
-cargo test --locked --bin clevo-fan-cli
+cargo run --locked -- --demo
+cargo run --locked -- --demo --smoke
+cargo run --locked -- --probe
 ```
 
-Before submitting, validate according to the change scope. Run default checks for Rust changes; add `-Release` for build, resource, script, or release workflow changes. Documentation-only changes require content, link, and Git diff checks. When changing dependencies or the toolchain, also review the lockfile, README technology stack, third-party notices, and `licenses/`.
+Demo mode uses simulated hardware but can still persist configuration. Isolate its output/configuration or back up your settings first. `--probe` performs read-only hardware sampling.
 
-## Execution and Validation Levels
+Real hardware writes, including `--hardware-check` and CLI `tune`, affect fan settings. Only run them on an authorized compatible device, with a plan to return control to firmware. Normal exit attempts restoration, but forced termination and hung drivers cannot guarantee it. Automated checks do not exercise real hardware writes.
 
-| Validation | Entry point | What it establishes |
-| --- | --- | --- |
-| Automated checks | `scripts/check.ps1` | Formatting, static checks, simulated hardware, and data logic regressions |
-| Release build | `scripts/check.ps1 -Release` | Windows target compilation, linking, and resource compilation |
-| Demo GUI | `cargo run --locked -- --demo` | UI interactions and simulated control flow; requires a desktop session |
-| Demo GUI smoke check | `cargo run --locked -- --demo --smoke` | Startup, temporary screenshot, and exit paths; confirm normal process termination |
-| Hardware sampling | `cargo run --locked -- --probe` | Current model, DLL, and telemetry reads |
-| Hardware writes | README `--hardware-check` and CLI `tune` | Writes, readback, and restoration on the corresponding machine and scenario |
+The GUI integration test in `tests/gui_history.rs` includes an ignored desktop workflow; it is not run by default and requires an isolated test directory and no other running controller.
 
-The shared check script performs only automated checks and an optional build. GUI checks, real sampling, and real writes are separate acceptance steps. The demo GUI and CLI share the single-instance lock; exit existing control programs normally before running them. The demo UI can still save configuration beside its executable, so use a separate build directory or back up configuration before experimenting.
-
-Hardware writes change fan state. Establish the machine, operations, and restoration steps before validation. Record the model, BIOS/EC, vendor components, DLL hash, operations, observations, and restoration result. Automated tests or one successful hardware test do not establish acceptance for other models, sleep/resume, or long-term operation. Restoration after forced termination or a hung driver is not guaranteed.
-
-### GUI History Acceptance
-
-`tests/gui_history.rs` includes an explicitly ignored desktop test that runs the actual GUI with simulated hardware and drives its controls through FLTK callbacks. Routine checks compile it but do not run its desktop workflow. Exit other controllers normally first: the test acquires the same single-instance lock. Use a separate output/configuration directory for each case:
-
-```powershell
-$env:CARGO_TARGET_DIR = Join-Path $PWD 'target/dev-check'
-$env:CFC_GUI_ROOT = Join-Path $PWD 'target/verification/gui-history-unique-session'
-$env:CFC_GUI_CASE = 'functional'
-cargo test --locked --test gui_history desktop_history_workflow -- --ignored --exact --nocapture
-```
-
-Cases `functional`, `save-failure`, `invalid`, and `open-failure` cover preference/full-save ordering, hidden recording, reload/import, failed preference persistence and output errors. `restart` reuses an existing recording-enabled case directory and verifies startup from its saved preference. The functional case saves its explicit full-save edits and discards its final imported draft; it never touches the ordinary executable's configuration. The failure cases deliberately obstruct paths only inside their isolated case directory.
-
-For performance, build the same test with `--release --target x86_64-pc-windows-msvc`, run it from an administrator terminal as required by the Release manifest, and set `CFC_GUI_CASE=performance`, `CFC_GUI_SECONDS=65`, `CFC_GUI_INTERVAL=2` or `0.2`, `CFC_GUI_RECORD=true` or `false`, and `CFC_GUI_HIDDEN=true` or `false`. Measure at least 60 seconds after startup warmup in each matched case. The test verifies both FLTK and native Windows visibility and writes `visibility.json` and `shutdown.json`. Record process CPU time normalized by logical processor count, working-set trends, file sizes, sample intervals and drops. A short simulated benchmark does not validate real DLL timing, sleep/resume or long-term hardware behavior.
-
-## Changes and Review
-
-- For configuration changes, check legacy defaults, strict validation, migration, and original file protection. For control changes, check fault, takeover cancellation, exit, and sleep/resume paths.
-- UI editing drafts, saved configuration, and the worker's active configuration have different lifecycles. Explain when affected actions submit, save, and take effect.
-- Commit or PR descriptions should state the problem, resulting behavior, verification actually performed, and scenarios still awaiting acceptance. Tests should cover behavior or fault boundaries.
-
-## Files and Artifacts
-
-| Path | Management |
-| --- | --- |
-| `src/`, `tests/`, `assets/`, build files | Source and necessary inputs; version controlled |
-| `Cargo.lock`, `rust-toolchain.toml` | Application dependency and toolchain baselines; version controlled |
-| `docs/` | Architecture and validation records; version controlled; link new documents from an appropriate entry point |
-| `CONTROL_OWNERSHIP_RESEARCH.md` | Historical protocol and ownership research; preserve dates, baseline, and evidence boundaries |
-| `licenses/`, `THIRD_PARTY_NOTICES.md` | Distribution notices and third-party licenses; review with dependency changes |
-| `target/` | Builds, raw tuning records, and local experiment outputs; ignored by Git |
-| Root `ClevoFanControl*.json` | Local runtime configuration; ignored by the specific filenames in `.gitignore` |
-| Root `ClevoFanControl-*.zip` | Local release or tuning archives; ignored by Git |
-
-Use `target/tuning/<unique-session-name>/` for tuning to avoid overwriting existing records. Preserve conclusions in `docs/` and identify the original evidence location. A local archive of raw records does not mean they are stored in the repository. Do not commit vendor DLLs, drivers, or personal runtime configurations with source or release packages.
-
-See `.editorconfig` for shared editor conventions; use `cargo fmt` for Rust formatting. Use UTF-8 and LF for new files without bulk rewriting existing files solely for cleanup.
+Document the checks actually run and any unverified scenarios in a PR. Never commit local device settings, vendor drivers/DLLs, or generated history records. Review `THIRD_PARTY_NOTICES.md` and `licenses/` whenever dependencies change.

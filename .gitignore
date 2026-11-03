@@ -1,28 +1,17 @@
-# Visual Studio 忽略规则
+# Local editor state
 .vs/
-.worktrees/
-bin/
-obj/
 *.user
 *.suo
 *.cache
 
-# Visual Studio and local build outputs
-Debug/
-Release/
-TraceRelease/
-*.obj
-*.pdb
-*.ilk
-*.iobj
-*.ipdb
-*.tlog/
-*.recipe
-*.log
+# Local Windows binaries, vendor components, and diagnostics
 *.exe
 *.dll
+*.sys
+*.pdb
+*.log
 
-# Rust build and local configuration
+# Rust builds and runtime data
 /target/
 /history/
 /history-demo/
@@ -33,7 +22,3 @@ TraceRelease/
 
 # Local release archives
 /ClevoFanControl-*.zip
-
-# Local tooling state
-/.codegraph/
-/.hallmark/
