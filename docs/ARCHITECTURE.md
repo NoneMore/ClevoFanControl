@@ -51,9 +51,7 @@ The GUI editing draft is separate from the worker's active configuration. Save a
 
 The worker owns the hardware object, receives `Command`, and returns state through `Event` and `Snapshot`. Snapshots separately preserve curve demand, actual request, and sampled readback values; these can differ during stable response or high-temperature protection. The UI displays events; the control thread handles scheduling and hardware interaction.
 
-GUI history uses a separate `Command::Recording` sink. Acquisition is enqueued before subsequent hardware calls; start/result events preserve the associated observation sequence. Verification-triggering samples are retained without adding reads. All storage and retention run in one writer thread; a full queue drops diagnostic records instead of delaying control. Complete state checkpoints at segment boundaries and after loss/context changes keep retained files interpretable. Recording status is independent of the worker's hardware fault latch. Normal exit restores first, then allows at most two seconds for writer finalization.
-
-Recording-only saves use the last committed configuration, not the mutable GUI settings or curve draft. They share the existing single-save gate with full saves and update only the recording preference on completion. Full saves update the committed snapshot; valid reloads synchronize it, and GUI legacy imports preserve the independent recording preference. Recording-only saves never send `Command::Settings`, clear unrelated dirty state or register auto-start. Disabling stops current recording even if preference persistence fails; the UI warns about the next-launch saved value.
+GUI history uses the `Command::Recording` sink and a separate nonblocking writer so recording cannot delay fan control. Recording-only preference saves use the last committed settings, not the GUI's editable draft or the worker's active configuration. The writer's lifetime and failures remain independent from hardware fault recovery; normal exit attempts fan restoration before recorder finalization. See [GUI history design constraints](GUI_HISTORY_DESIGN.md) for the storage, event, persistence, and failure guarantees to preserve.
 
 The CLI does not use the GUI `Worker`. Its own session loop combines shared control algorithms, tuning, and hardware interfaces. Check both GUI and CLI when changing shared algorithms, and inspect both entry points separately when changing scheduling or restoration paths. The CLI outputs candidate configurations without directly overwriting user configuration.
 
@@ -69,6 +67,7 @@ See the [historical research record](../CONTROL_OWNERSHIP_RESEARCH.md) for proto
 
 - `tests/core.rs`: public behavior including curves, hysteresis, stable response, high-temperature protection, configuration validation, and import.
 - `tests/nh5xax.rs`: model name matching boundaries for default compatibility rules.
+- `tests/gui_history.rs`: GUI recording integration and explicitly ignored desktop acceptance scenarios.
 - Tests in `src/worker.rs`: takeover, restoration, and fault behavior with simulated hardware.
 - Tests in `src/tuning.rs`, `src/cli.rs`, and `src/load.rs`: tuning, arguments, load calculations, and related logic.
 - Tests in `src/hardware.rs` and UI modules: compatibility helpers, appearance, history, and other local behavior.

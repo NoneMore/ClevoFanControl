@@ -4,28 +4,18 @@ A native Windows x64 fan controller for Clevo laptops, written in **Rust + FLTK*
 
 The project was inspired by **myfancontrol**, but the current implementation is largely independent: the UI, control logic, and hardware communication have been reimplemented. This version communicates with the EC through installed vendor ACPI components. It **no longer uses or distributes `NTPortDrvSetup.exe`, `ClevoEcInfo.dll`, or `NVGPU_DLL.dll`**, and does not provide the legacy GPU frequency limiting feature.
 
-> This project was developed by **gpt-6-astra@medium**. **Use at your own risk.** Fan control directly affects cooling; verify your curves and device compatibility. Compatibility with every Clevo model and restoration of firmware automatic control after abnormal termination are not guaranteed.
+> **Safety:** Fan control directly affects cooling. Verify fan curves and device compatibility before enabling takeover. Compatibility with every Clevo model and restoration of firmware automatic control after abnormal termination are not guaranteed.
 
-## Language and Technology Stack
+## Technology and Development
 
-| Purpose | Technology |
-| --- | --- |
-| Programming language | Rust, Edition 2024; toolchain pinned to 1.97.1 |
-| UI | fltk-rs / fltk-sys 1.5.23 with the `fltk-bundled` precompiled FLTK library |
-| Configuration serialization | Serde, serde_json |
-| Windows integration | windows-sys: tray, single-instance enforcement, process enumeration, system appearance, power events, and more |
-| Vendor interface loading and validation | libloading, sha2 |
-| Concurrency and scheduling | Rust standard library threads and message channels; dedicated fan control worker thread |
-| Build and release | Cargo, winresource, MSVC / Windows SDK, GitHub Actions |
+ClevoFanControl uses Rust (edition 2024) and FLTK for its Windows x64 GUI, Serde for configuration, and installed vendor ACPI components for hardware access. The toolchain is pinned in [rust-toolchain.toml](rust-toolchain.toml); dependency manifests and locked versions are in [Cargo.toml](Cargo.toml) and [Cargo.lock](Cargo.lock).
 
-Dependency versions are defined by [Cargo.lock](Cargo.lock); see [rust-toolchain.toml](rust-toolchain.toml) for the toolchain.
-
-Start development with the [development guide](CONTRIBUTING.md). See the [architecture guide](docs/ARCHITECTURE.md) for module responsibilities and state boundaries.
+For environment setup and checks, see the [development guide](CONTRIBUTING.md). For module responsibilities and state boundaries, see the [architecture guide](docs/ARCHITECTURE.md).
 
 ## Main Features
 
 - **Visual curve editing**: separate CPU/GPU curves with 2–16 nodes each; dragging, double-click insertion, keyboard adjustments, and numeric editing.
-- **Control policies**: stepped or linear curves, cooling hysteresis, and smooth duty changes; software takeover and return to firmware automatic control. ~~The third fan uses the GPU target~~.
+- **Control policies**: stepped or linear curves, cooling hysteresis, and smooth duty changes; software takeover and return to firmware automatic control.
 - **One-shot forced cooling**: runs at 95% duty until temperature drops below the configured threshold; takes priority over normal curves and is not saved as a persistent toggle.
 - **Real-time monitoring**: temperature, RPM, actual and target duty. CPU/GPU history advances by sample, supports 10–300 points, and defaults to 60. Missing samples leave gaps; a dashed line reconnects after recovery.
 - **Optional background history**: independently saved recording switch, CSV telemetry and JSONL control events; continues in the tray without additional hardware or GPU workload queries. See [GUI history recording](#gui-history-recording).
@@ -109,11 +99,11 @@ Run in PowerShell from the repository root:
 pwsh -NoProfile -File .\scripts\check.ps1 -Release
 ```
 
-The check script requires PowerShell 7. It runs `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked` by default; `-Release` adds a Windows x64 Release build. See the development guide for individual checks and environment setup.
+The script requires PowerShell 7 and runs formatting, Clippy, and Rust tests; `-Release` also builds the Windows x64 executables. See the [development guide](CONTRIBUTING.md) for individual commands and validation levels.
 
 The GUI output is `target/x86_64-pc-windows-msvc/release/clevo-fan-control.exe`. GitHub Actions uses the same check script. The manual release workflow requires the tag to match the `Cargo.toml` version. Release packages include the programs, README, third-party notices, and license directory, without vendor DLLs/drivers.
 
-Current automated tests cover curves and hysteresis, forced cooling, third-fan following, fault recovery, correction after external overwrites, takeover cancellation, configuration validation and import, history charts, and some UI appearance behavior. They use simulated hardware and do not replace hardware acceptance.
+Automated checks use simulated hardware and do not replace desktop or real-hardware acceptance.
 
 Development diagnostics:
 
@@ -145,7 +135,7 @@ JSONL records include `format_version`, `session_id`, `sequence`, `observation`,
 
 History contains local preset names, effective fan curves and hardware description. It does not include process lists, workload utilization/power, or unsaved drafts, and does not launch `nvidia-smi`. Existing CLI outputs remain separate; CLI candidates explicitly disable the GUI recorder. Older binaries with strict JSON parsing can reject `historyRecordingEnabled`: exit normally and restore a configuration backup or remove that field before downgrading. Removing it defaults recording off and does not delete history.
 
-See the [GUI history validation record](docs/GUI_HISTORY_VALIDATION.md) for simulated acceptance, performance measurements and outstanding hardware scenarios.
+See the [GUI history design constraints](docs/GUI_HISTORY_DESIGN.md) for behavior to preserve and the [validation record](docs/GUI_HISTORY_VALIDATION.md) for measurements and outstanding hardware scenarios.
 
 ### CLI Sampling and Ordinary-Workload Tuning
 

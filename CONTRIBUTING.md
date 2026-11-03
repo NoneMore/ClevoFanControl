@@ -77,8 +77,7 @@ For performance, build the same test with `--release --target x86_64-pc-windows-
 
 ## Changes and Review
 
-- For configuration changes, check legacy defaults, strict validation, migration, and original file protection. For control changes, check fault, takeover cancellation, exit, and sleep/resume paths.
-- UI editing drafts, saved configuration, and the worker's active configuration have different lifecycles. Explain when affected actions submit, save, and take effect.
+- Review the [architecture guide](docs/ARCHITECTURE.md) for configuration, GUI/CLI state boundaries, fault recovery, and restoration paths. Recording changes must also preserve the [GUI history design constraints](docs/GUI_HISTORY_DESIGN.md). Describe user-visible activation, persistence, and migration effects in the PR.
 - Commit or PR descriptions should state the problem, resulting behavior, verification actually performed, and scenarios still awaiting acceptance. Tests should cover behavior or fault boundaries.
 
 ## Files and Artifacts
@@ -87,7 +86,7 @@ For performance, build the same test with `--release --target x86_64-pc-windows-
 | --- | --- |
 | `src/`, `tests/`, `assets/`, build files | Source and necessary inputs; version controlled |
 | `Cargo.lock`, `rust-toolchain.toml` | Application dependency and toolchain baselines; version controlled |
-| `docs/` | Architecture and validation records; version controlled; link new documents from an appropriate entry point |
+| `docs/` | Architecture, long-lived design constraints, and validation records; version controlled and linked from the README or development guide |
 | `CONTROL_OWNERSHIP_RESEARCH.md` | Historical protocol and ownership research; preserve dates, baseline, and evidence boundaries |
 | `licenses/`, `THIRD_PARTY_NOTICES.md` | Distribution notices and third-party licenses; review with dependency changes |
 | `target/` | Builds, raw tuning records, and local experiment outputs; ignored by Git |

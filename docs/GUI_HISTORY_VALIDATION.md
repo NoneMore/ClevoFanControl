@@ -80,7 +80,7 @@ Frozen CSV/JSONL copies and the parsed `review.json` are stored locally under `t
 
 Archive-readiness conclusion: no blocking issue was found in the reviewed session. Together with the completed 28 implementation tasks and prior automated/demo acceptance, the evidence supports archiving this feature while retaining the boundaries below. The review itself does not archive the change or synchronize its delta specification.
 
-Following user confirmation, the change was archived as [2026-10-16-add-gui-history-recording](../openspec/changes/archive/2026-10-16-add-gui-history-recording/proposal.md), with all 10 requirements synchronized into the [GUI history recording specification](../openspec/specs/gui-history-recording/spec.md). The independent build's configuration handoff is documented in the README configuration section.
+Following user confirmation, the change was archived as [2026-10-16-add-gui-history-recording](https://github.com/NoneMore/ClevoFanControl/blob/4d263b91c242a746749ed6d07d9e276e75571658/openspec/changes/archive/2026-10-16-add-gui-history-recording/proposal.md), with all 10 requirements synchronized into the [GUI history recording specification](https://github.com/NoneMore/ClevoFanControl/blob/4d263b91c242a746749ed6d07d9e276e75571658/openspec/specs/gui-history-recording/spec.md). These planning files remain accessible in that historical commit after removal from the working tree; ongoing requirements are summarized in the [GUI history design constraints](GUI_HISTORY_DESIGN.md). The independent build's configuration handoff is documented in the README configuration section.
 
 ## Outstanding acceptance boundaries
 
